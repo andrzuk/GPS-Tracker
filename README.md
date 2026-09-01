@@ -64,8 +64,8 @@ app/src/main/java/com/example/
 - Android Studio (latest stable recommended)
 - Android SDK:
   - minSdk: 24
-  - targetSdk: 36
-  - compileSdk: 36
+  - targetSdk: 35
+  - compileSdk: 36 (minor API level 1)
 - JDK 17 or newer
 - Internet access for dependency download
 
@@ -130,6 +130,8 @@ The app requests:
 - FOREGROUND_SERVICE
 - FOREGROUND_SERVICE_LOCATION
 - POST_NOTIFICATIONS (Android 13+)
+
+On MIUI/HyperOS devices where the system permission dialog is suppressed, the app shows an in-app rationale dialog with manual steps. The "Open Settings" button attempts to open the MIUI SecurityCenter permission editor directly (`miui.intent.action.APP_PERM_EDITOR`), falling back to standard App Info if the MIUI component is unavailable.
 
 ## Tracking Flow
 
