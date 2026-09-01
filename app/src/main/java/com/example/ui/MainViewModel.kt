@@ -48,6 +48,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val listType = Types.newParameterizedType(List::class.java, Array<Double>::class.java)
     private val adapter = moshi.adapter<List<Array<Double>>>(listType)
 
+    fun startPassiveGpsUpdates() {
+        gpsManager.startGpsUpdates()
+    }
+
+    fun stopPassiveGpsUpdates() {
+        if (!gpsManager.trackingState.value.isTracking) {
+            gpsManager.stopGpsUpdates()
+        }
+    }
+
     fun startTracking() {
         try {
             TrackingService.startService(getApplication())

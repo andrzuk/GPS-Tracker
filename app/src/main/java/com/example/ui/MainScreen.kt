@@ -129,6 +129,7 @@ fun MainScreen(
         hasFineLocationPerm = checkHasFineLocationPermission(context)
         if (hasFineLocationPerm) {
             hasAutoOpenedSettingsThisSession = false
+            viewModel.startPassiveGpsUpdates()
             return@rememberLauncherForActivityResult
         }
 
@@ -170,12 +171,19 @@ fun MainScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         hasLocationPerm = checkHasLocationPermission(context)
         hasFineLocationPerm = checkHasFineLocationPermission(context)
+        if (hasFineLocationPerm) viewModel.startPassiveGpsUpdates()
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
         if (!hasFineLocationPerm) {
             requestPermissions()
+        } else {
+            viewModel.startPassiveGpsUpdates()
         }
+    }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        viewModel.stopPassiveGpsUpdates()
     }
 
     Scaffold(
