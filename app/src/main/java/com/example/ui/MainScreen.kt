@@ -150,8 +150,9 @@ fun MainScreen(
                 onStart = {
                     if (!hasLocationPerm) {
                         requestPermissions()
+                    } else {
+                        viewModel.startTracking()
                     }
-                    viewModel.startTracking()
                 },
                 onPause = { viewModel.pauseTracking() },
                 onResume = { viewModel.resumeTracking() },
@@ -386,6 +387,7 @@ fun SingleScreenDashboard(
         ControlBar(
             status = trackingState.status,
             hasRecordedData = trackingState.routePoints.isNotEmpty() || trackingState.distanceMeters > 0,
+            hasLocationPermission = hasLocationPermission,
             onStart = onStart,
             onPause = onPause,
             onResume = onResume,

@@ -54,6 +54,7 @@ import com.example.ui.theme.RoseDestructive
 fun ControlBar(
     status: TrackingStatus,
     hasRecordedData: Boolean,
+    hasLocationPermission: Boolean = true,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -90,6 +91,7 @@ fun ControlBar(
                         // Big Start Pill Button in Bento Lilac
                         Button(
                             onClick = onStart,
+                            enabled = hasLocationPermission,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(56.dp)
@@ -97,9 +99,14 @@ fun ControlBar(
                             shape = RoundedCornerShape(28.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = BentoPrimaryButton,
-                                contentColor = BentoOnPrimaryButton
+                                contentColor = BentoOnPrimaryButton,
+                                disabledContainerColor = MaterialTheme.colorScheme.surface,
+                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                             ),
-                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                            elevation = ButtonDefaults.buttonElevation(
+                                defaultElevation = 2.dp,
+                                disabledElevation = 0.dp
+                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
@@ -232,6 +239,19 @@ fun ControlBar(
                         }
                     }
                 }
+            }
+
+            AnimatedVisibility(
+                visible = status == TrackingStatus.STOPPED && !hasLocationPermission,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Text(
+                    text = "Wymagane uprawnienie lokalizacji. Kliknij status GPS u góry.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
 
             // Secondary Action Row (Reset counters, Save track, History)
