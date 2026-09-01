@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.GpsTrackerApp
 import com.example.data.db.TrackEntity
 import com.example.data.models.TrackingState
-import com.example.data.models.TrackingStatus
 import com.example.location.GpsTrackingManager
 import com.example.service.TrackingService
 import com.squareup.moshi.Moshi
@@ -50,19 +49,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val adapter = moshi.adapter<List<Array<Double>>>(listType)
 
     fun startTracking() {
-        TrackingService.startService(getApplication())
+        try {
+            TrackingService.startService(getApplication())
+        } catch (_: Exception) {}
+        gpsManager.startTracking()
     }
 
     fun pauseTracking() {
-        TrackingService.pauseService(getApplication())
+        try {
+            TrackingService.pauseService(getApplication())
+        } catch (_: Exception) {}
+        gpsManager.pauseTracking()
     }
 
     fun resumeTracking() {
-        TrackingService.resumeService(getApplication())
+        try {
+            TrackingService.resumeService(getApplication())
+        } catch (_: Exception) {}
+        gpsManager.resumeTracking()
     }
 
     fun stopTracking() {
-        TrackingService.stopService(getApplication())
+        try {
+            TrackingService.stopService(getApplication())
+        } catch (_: Exception) {}
+        gpsManager.stopTracking()
     }
 
     fun requestReset() {

@@ -1,6 +1,10 @@
 {
   "name": "GPS Tracker",
   "description": "Aplikacja do monitorowania trasy GPS w czasie rzeczywistym z pomiarem prędkości bieżącej i średniej, dystansu oraz czasu trwania aktywności.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

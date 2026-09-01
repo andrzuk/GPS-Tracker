@@ -1,9 +1,15 @@
 package com.example.ui
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,15 +27,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.Landscape
-import androidx.compose.material.icons.filled.LocationSearching
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TrendingUp
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -39,13 +40,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.ui.components.ControlBar
 import com.example.ui.components.GpsHeaderBar
 import com.example.ui.components.HistoryBottomSheet
@@ -54,22 +61,26 @@ import com.example.ui.components.ResetConfirmDialog
 import com.example.ui.components.SaveTrackDialog
 import com.example.ui.components.SpeedGauge
 import com.example.ui.theme.AmberWarning
-import com.example.ui.theme.BentoHeroLilac
-import com.example.ui.theme.BentoHeroOnLilac
-import com.example.ui.theme.BentoOnPrimaryButton
-import com.example.ui.theme.BentoPrimaryButton
-import com.example.ui.theme.CyanPrimary
 import com.example.ui.theme.EmeraldAccent
-import com.example.ui.theme.VioletAccent
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
-@OptIn(ExperimentalPermissionsApi::class)
+fun checkHasLocationPermission(context: Context): Boolean {
+    val fineLocation = ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+    val coarseLocation = ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+    return fineLocation || coarseLocation
+}
+
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val trackingState by viewModel.trackingState.collectAsState()
     val savedTracks by viewModel.savedTracks.collectAsState()
     val isDarkTheme by viewModel.isDarkTheme.collectAsState()
@@ -78,19 +89,43 @@ fun MainScreen(
     val showResetDialog by viewModel.showResetDialog.collectAsState()
     val showHistorySheet by viewModel.showHistorySheet.collectAsState()
 
-    // Permission handling
-    val permissions = buildList {
-        add(Manifest.permission.ACCESS_FINE_LOCATION)
-        add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.POST_NOTIFICATIONS)
+    var hasLocationPerm by remember { mutableStateOf(checkHasLocationPermission(context)) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        hasLocationPerm = checkHasLocationPermission(context)
+    }
+
+    fun requestPermissions() {
+        val perms = buildList {
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.toTypedArray()
+        try {
+            permissionLauncher.launch(perms)
+        } catch (e: Exception) {
+            // Fallback to app details settings if direct prompt fails
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } catch (_: Exception) {}
         }
     }
-    val permissionState = rememberMultiplePermissionsState(permissions = permissions)
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        hasLocationPerm = checkHasLocationPermission(context)
+    }
 
     LaunchedEffect(Unit) {
-        if (!permissionState.allPermissionsGranted) {
-            permissionState.launchMultiplePermissionRequest()
+        if (!hasLocationPerm) {
+            requestPermissions()
         }
     }
 
@@ -105,26 +140,26 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            if (!permissionState.allPermissionsGranted) {
-                // Permission request view
-                LocationPermissionPrompt(
-                    onRequestPermissions = { permissionState.launchMultiplePermissionRequest() }
-                )
-            } else {
-                // Single-screen Complete Dashboard Layout
-                SingleScreenDashboard(
-                    trackingState = trackingState,
-                    isDarkTheme = isDarkTheme,
-                    onToggleTheme = { viewModel.toggleTheme() },
-                    onStart = { viewModel.startTracking() },
-                    onPause = { viewModel.pauseTracking() },
-                    onResume = { viewModel.resumeTracking() },
-                    onStop = { viewModel.stopTracking() },
-                    onReset = { viewModel.requestReset() },
-                    onSave = { viewModel.openSaveDialog() },
-                    onOpenHistory = { viewModel.openHistorySheet() }
-                )
-            }
+            // Direct Dashboard Access - Never blocks the user!
+            SingleScreenDashboard(
+                trackingState = trackingState,
+                hasLocationPermission = hasLocationPerm,
+                onRequestPermissions = { requestPermissions() },
+                isDarkTheme = isDarkTheme,
+                onToggleTheme = { viewModel.toggleTheme() },
+                onStart = {
+                    if (!hasLocationPerm) {
+                        requestPermissions()
+                    }
+                    viewModel.startTracking()
+                },
+                onPause = { viewModel.pauseTracking() },
+                onResume = { viewModel.resumeTracking() },
+                onStop = { viewModel.stopTracking() },
+                onReset = { viewModel.requestReset() },
+                onSave = { viewModel.openSaveDialog() },
+                onOpenHistory = { viewModel.openHistorySheet() }
+            )
 
             // Dialogs & Sheets
             if (showSaveDialog) {
@@ -158,6 +193,8 @@ fun MainScreen(
 @Composable
 fun SingleScreenDashboard(
     trackingState: com.example.data.models.TrackingState,
+    hasLocationPermission: Boolean,
+    onRequestPermissions: () -> Unit,
     isDarkTheme: Boolean?,
     onToggleTheme: () -> Unit,
     onStart: () -> Unit,
@@ -181,6 +218,8 @@ fun SingleScreenDashboard(
         GpsHeaderBar(
             signalQuality = trackingState.signalQuality,
             accuracyMeters = trackingState.gpsAccuracyMeters,
+            hasLocationPermission = hasLocationPermission,
+            onRequestPermission = onRequestPermissions,
             isDarkTheme = isDarkTheme,
             onToggleTheme = onToggleTheme
         )
@@ -357,84 +396,5 @@ fun SingleScreenDashboard(
         )
 
         Spacer(modifier = Modifier.height(4.dp))
-    }
-}
-
-@Composable
-fun LocationPermissionPrompt(
-    onRequestPermissions: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Card(
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("card_permission_prompt")
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = BentoHeroLilac,
-                    modifier = Modifier.size(72.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.LocationSearching,
-                            contentDescription = null,
-                            tint = BentoHeroOnLilac,
-                            modifier = Modifier.size(36.dp)
-                        )
-                    }
-                }
-
-                Text(
-                    text = "Dostęp do Lokalizacji GPS",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.Center
-                )
-
-                Text(
-                    text = "Aplikacja wymaga uprawnień do lokalizacji, aby rejestrować parametry GPS: prędkość bieżącą, średnią, maksymalną, przebyty dystans, czas oraz wysokość.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Button(
-                    onClick = onRequestPermissions,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .testTag("btn_grant_location_permission"),
-                    shape = RoundedCornerShape(26.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BentoPrimaryButton,
-                        contentColor = BentoOnPrimaryButton
-                    )
-                ) {
-                    Text(
-                        text = "Zezwól na Dostęp do GPS",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
     }
 }

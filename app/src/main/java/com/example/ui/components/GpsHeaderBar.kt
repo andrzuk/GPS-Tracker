@@ -48,6 +48,8 @@ import com.example.ui.theme.RoseDestructive
 fun GpsHeaderBar(
     signalQuality: GpsSignalQuality,
     accuracyMeters: Float,
+    hasLocationPermission: Boolean = true,
+    onRequestPermission: () -> Unit = {},
     isDarkTheme: Boolean?,
     onToggleTheme: () -> Unit,
     modifier: Modifier = Modifier
@@ -68,7 +70,10 @@ fun GpsHeaderBar(
             // App Branding & Logo
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = if (!hasLocationPermission) {
+                    Modifier.clickable { onRequestPermission() }
+                } else Modifier
             ) {
                 Box(
                     modifier = Modifier
@@ -93,10 +98,11 @@ fun GpsHeaderBar(
                         letterSpacing = 1.2.sp
                     )
                     // GPS Accuracy Indicator
-                    val (signalText, signalColor) = when (signalQuality) {
-                        GpsSignalQuality.EXCELLENT -> "GPS: Doskonały (±${accuracyMeters.toInt()}m)" to EmeraldAccent
-                        GpsSignalQuality.GOOD -> "GPS: Dobry (±${accuracyMeters.toInt()}m)" to EmeraldAccent
-                        GpsSignalQuality.WEAK -> "GPS: Słaby (±${accuracyMeters.toInt()}m)" to AmberWarning
+                    val (signalText, signalColor) = when {
+                        !hasLocationPermission -> "Brak uprawnień GPS (kliknij)" to AmberWarning
+                        signalQuality == GpsSignalQuality.EXCELLENT -> "GPS: Doskonały (±${accuracyMeters.toInt()}m)" to EmeraldAccent
+                        signalQuality == GpsSignalQuality.GOOD -> "GPS: Dobry (±${accuracyMeters.toInt()}m)" to EmeraldAccent
+                        signalQuality == GpsSignalQuality.WEAK -> "GPS: Słaby (±${accuracyMeters.toInt()}m)" to AmberWarning
                         else -> "Szukanie sygnału GPS..." to RoseDestructive
                     }
 

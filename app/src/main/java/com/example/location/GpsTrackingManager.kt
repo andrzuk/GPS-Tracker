@@ -3,7 +3,11 @@ package com.example.location
 import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Bundle
 import android.os.Looper
+import android.util.Log
 import com.example.data.models.GpsSignalQuality
 import com.example.data.models.LocationPoint
 import com.example.data.models.TrackingState
@@ -24,14 +28,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.sin
 
 class GpsTrackingManager private constructor(private val context: Context) {
 
-    private val fusedLocationClient: FusedLocationProviderClient =
+    private val TAG = "GpsTrackingManager"
+
+    private val fusedLocationClient: FusedLocationProviderClient by lazy {
         LocationServices.getFusedLocationProviderClient(context)
+    }
+
+    private val systemLocationManager: LocationManager? by lazy {
+        context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+    }
 
     private val _trackingState = MutableStateFlow(TrackingState())
     val trackingState: StateFlow<TrackingState> = _trackingState.asStateFlow()
@@ -42,12 +51,23 @@ class GpsTrackingManager private constructor(private val context: Context) {
     private var lastRawLocation: Location? = null
     private var isListeningGps = false
 
-    private val locationCallback = object : LocationCallback() {
+    private val fusedLocationCallback = object : LocationCallback() {
         override fun onLocationResult(locationResult: LocationResult) {
             for (location in locationResult.locations) {
                 processNewLocation(location)
             }
         }
+    }
+
+    private val systemLocationListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            processNewLocation(location)
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        override fun onProviderEnabled(provider: String) {}
+        override fun onProviderDisabled(provider: String) {}
     }
 
     companion object {
@@ -66,29 +86,75 @@ class GpsTrackingManager private constructor(private val context: Context) {
         if (isListeningGps) return
         isListeningGps = true
 
-        val locationRequest = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            1000L
-        ).apply {
-            setMinUpdateIntervalMillis(500L)
-            setMinUpdateDistanceMeters(0.5f)
-            setWaitForAccurateLocation(false)
-        }.build()
-
+        // 1. Try Google Play Services Fused Location
         try {
+            val locationRequest = LocationRequest.Builder(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                1000L
+            ).apply {
+                setMinUpdateIntervalMillis(500L)
+                setMinUpdateDistanceMeters(0.5f)
+                setWaitForAccurateLocation(false)
+            }.build()
+
             fusedLocationClient.requestLocationUpdates(
                 locationRequest,
-                locationCallback,
+                fusedLocationCallback,
                 Looper.getMainLooper()
-            )
-            // Fetch last known position immediately
+            ).addOnFailureListener { e ->
+                Log.w(TAG, "Fused location request failed, using system fallback: ${e.message}")
+                requestSystemLocationFallback()
+            }
+
             fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
                 if (loc != null && _trackingState.value.currentLocation == null) {
                     processNewLocation(loc)
                 }
             }
         } catch (e: SecurityException) {
+            Log.w(TAG, "SecurityException in fusedLocationClient: ${e.message}")
             _trackingState.update { it.copy(signalQuality = GpsSignalQuality.DISCONNECTED) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Exception in fusedLocationClient: ${e.message}, trying system location manager")
+            requestSystemLocationFallback()
+        }
+
+        // 2. Also register system location manager as reliable fallback
+        requestSystemLocationFallback()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun requestSystemLocationFallback() {
+        val lm = systemLocationManager ?: return
+        try {
+            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                lm.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    1000L,
+                    0.5f,
+                    systemLocationListener,
+                    Looper.getMainLooper()
+                )
+            }
+            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                lm.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    1000L,
+                    0.5f,
+                    systemLocationListener,
+                    Looper.getMainLooper()
+                )
+            }
+            val lastGps = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val lastNet = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            val best = lastGps ?: lastNet
+            if (best != null && _trackingState.value.currentLocation == null) {
+                processNewLocation(best)
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "SecurityException in system LocationManager: ${e.message}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Exception in system LocationManager: ${e.message}")
         }
     }
 
@@ -96,9 +162,14 @@ class GpsTrackingManager private constructor(private val context: Context) {
         if (!isListeningGps) return
         isListeningGps = false
         try {
-            fusedLocationClient.removeLocationUpdates(locationCallback)
+            fusedLocationClient.removeLocationUpdates(fusedLocationCallback)
         } catch (e: Exception) {
-            // Ignored
+            Log.w(TAG, "removeLocationUpdates error: ${e.message}")
+        }
+        try {
+            systemLocationManager?.removeUpdates(systemLocationListener)
+        } catch (e: Exception) {
+            Log.w(TAG, "removeUpdates system error: ${e.message}")
         }
     }
 
@@ -131,6 +202,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         _trackingState.update { current ->
             current.copy(status = TrackingStatus.TRACKING)
         }
+        startGpsUpdates()
         startTimer()
     }
 
