@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -166,3 +167,40 @@ fun ResetConfirmDialog(
     )
 }
 
+@Composable
+fun LocationPermissionRationaleDialog(
+    onOpenSettings: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(28.dp),
+        icon = {
+            Icon(
+                imageVector = Icons.Default.LocationOff,
+                contentDescription = null,
+                tint = RoseDestructive
+            )
+        },
+        title = {
+            Text("Brak uprawnień lokalizacji", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Aplikacja nie może wyświetlić systemowego okna uprawnień.")
+                Text("Nadaj uprawnienie ręcznie:")
+                Text("Ustawienia → Aplikacje → GPS Tracker → Uprawnienia → Lokalizacja → Zezwól podczas używania aplikacji")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onOpenSettings) {
+                Text("Otwórz ustawienia")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}

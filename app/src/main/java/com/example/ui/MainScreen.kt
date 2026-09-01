@@ -38,6 +38,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +61,7 @@ import com.example.ui.components.HistoryBottomSheet
 import com.example.ui.components.MetricStatCard
 import com.example.ui.components.ResetConfirmDialog
 import com.example.ui.components.SaveTrackDialog
+import com.example.ui.components.LocationPermissionRationaleDialog
 import com.example.ui.components.SpeedGauge
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.EmeraldAccent
@@ -92,11 +94,27 @@ private tailrec fun Context.findActivity(): Activity? {
 }
 
 private fun openAppDetailsSettings(context: Context) {
-    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-        data = Uri.fromParts("package", context.packageName, null)
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    val pm = context.packageManager
+
+    // MIUI/HyperOS has its own permission manager that works even when App Info > Permissions crashes
+    val miuiIntent = Intent("miui.intent.action.APP_PERM_EDITOR").apply {
+        setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
+        putExtra("extra_pkgname", context.packageName)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    context.startActivity(intent)
+
+    val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.fromParts("package", context.packageName, null)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    try {
+        if (miuiIntent.resolveActivity(pm) != null) {
+            context.startActivity(miuiIntent)
+            return
+        }
+    } catch (_: Exception) {}
+    context.startActivity(fallbackIntent)
 }
 
 @Composable
@@ -116,70 +134,43 @@ fun MainScreen(
 
     var hasLocationPerm by remember { mutableStateOf(checkHasLocationPermission(context)) }
     var hasFineLocationPerm by remember { mutableStateOf(checkHasFineLocationPermission(context)) }
-    var permissionRequestInFlight by remember { mutableStateOf(false) }
-    var hasAutoOpenedSettingsThisSession by remember { mutableStateOf(false) }
+    var showPermissionRationaleDialog by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        if (!permissionRequestInFlight) return@rememberLauncherForActivityResult
-        permissionRequestInFlight = false
-
         hasLocationPerm = checkHasLocationPermission(context)
         hasFineLocationPerm = checkHasFineLocationPermission(context)
+
         if (hasFineLocationPerm) {
-            hasAutoOpenedSettingsThisSession = false
+            showPermissionRationaleDialog = false
             viewModel.startPassiveGpsUpdates()
-            return@rememberLauncherForActivityResult
-        }
-
-        if (activity != null && !hasAutoOpenedSettingsThisSession) {
-            val showFineRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-                activity,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
-            val showCoarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-                activity,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-
-            val permissionDialogBlocked = !showFineRationale && !showCoarseRationale
-            if (permissionDialogBlocked) {
-                hasAutoOpenedSettingsThisSession = true
-                openAppDetailsSettings(context)
-            }
+        } else {
+            // System dialog was blocked (e.g. MIUI) — show in-app explanation instead
+            showPermissionRationaleDialog = true
         }
     }
 
     fun requestPermissions() {
-        val perms = arrayOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
+        permissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
         )
-        try {
-            permissionRequestInFlight = true
-            permissionLauncher.launch(perms)
-        } catch (e: Exception) {
-            permissionRequestInFlight = false
-            // Fallback to app details settings if direct prompt fails
-            try {
-                openAppDetailsSettings(context)
-            } catch (_: Exception) {}
-        }
     }
 
+    // Fires on initial composition — reliable unlike LifecycleEventEffect(ON_START)
+    LaunchedEffect(Unit) {
+        if (!hasFineLocationPerm) requestPermissions()
+        else viewModel.startPassiveGpsUpdates()
+    }
+
+    // Refresh state and restart passive GPS when returning from background/settings
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         hasLocationPerm = checkHasLocationPermission(context)
         hasFineLocationPerm = checkHasFineLocationPermission(context)
         if (hasFineLocationPerm) viewModel.startPassiveGpsUpdates()
-    }
-
-    LifecycleEventEffect(Lifecycle.Event.ON_START) {
-        if (!hasFineLocationPerm) {
-            requestPermissions()
-        } else {
-            viewModel.startPassiveGpsUpdates()
-        }
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
@@ -242,6 +233,16 @@ fun MainScreen(
                     tracks = savedTracks,
                     onDismiss = { viewModel.dismissHistorySheet() },
                     onDeleteTrack = { track -> viewModel.deleteTrack(track) }
+                )
+            }
+
+            if (showPermissionRationaleDialog) {
+                LocationPermissionRationaleDialog(
+                    onOpenSettings = {
+                        showPermissionRationaleDialog = false
+                        openAppDetailsSettings(context)
+                    },
+                    onDismiss = { showPermissionRationaleDialog = false }
                 )
             }
         }
