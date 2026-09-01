@@ -44,7 +44,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -111,34 +110,33 @@ fun MainScreen(
     val showHistorySheet by viewModel.showHistorySheet.collectAsState()
 
     var hasLocationPerm by remember { mutableStateOf(checkHasLocationPermission(context)) }
-    var hasRequestedLocationPermission by rememberSaveable { mutableStateOf(false) }
+    var openSettingsAfterPermissionResult by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         hasLocationPerm = checkHasLocationPermission(context)
-    }
 
-    fun shouldOpenSettingsForLocationPermission(): Boolean {
-        if (hasLocationPerm || !hasRequestedLocationPermission || activity == null) return false
+        if (!hasLocationPerm && openSettingsAfterPermissionResult && activity != null) {
+            val showFineRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+                activity,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+            val showCoarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+                activity,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
 
-        val showFineRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-            activity,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-        val showCoarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-            activity,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-
-        return !showFineRationale && !showCoarseRationale
-    }
-
-    fun requestPermissions() {
-        if (shouldOpenSettingsForLocationPermission()) {
-            openAppDetailsSettings(context)
-            return
+            if (!showFineRationale && !showCoarseRationale) {
+                openAppDetailsSettings(context)
+            }
         }
+
+        openSettingsAfterPermissionResult = false
+    }
+
+    fun requestPermissions(fromUserAction: Boolean) {
+        openSettingsAfterPermissionResult = fromUserAction
 
         val perms = buildList {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -148,13 +146,13 @@ fun MainScreen(
             }
         }.toTypedArray()
         try {
-            hasRequestedLocationPermission = true
             permissionLauncher.launch(perms)
         } catch (e: Exception) {
             // Fallback to app details settings if direct prompt fails
             try {
                 openAppDetailsSettings(context)
             } catch (_: Exception) {}
+            openSettingsAfterPermissionResult = false
         }
     }
 
@@ -164,7 +162,7 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         if (!hasLocationPerm) {
-            requestPermissions()
+            requestPermissions(fromUserAction = false)
         }
     }
 
@@ -183,12 +181,12 @@ fun MainScreen(
             SingleScreenDashboard(
                 trackingState = trackingState,
                 hasLocationPermission = hasLocationPerm,
-                onRequestPermissions = { requestPermissions() },
+                onRequestPermissions = { requestPermissions(fromUserAction = true) },
                 isDarkTheme = isDarkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
                 onStart = {
                     if (!hasLocationPerm) {
-                        requestPermissions()
+                        requestPermissions(fromUserAction = true)
                     } else {
                         viewModel.startTracking()
                     }
