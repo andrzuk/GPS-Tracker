@@ -76,6 +76,13 @@ fun checkHasLocationPermission(context: Context): Boolean {
     return fineLocation || coarseLocation
 }
 
+fun checkHasFineLocationPermission(context: Context): Boolean {
+    return ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+}
+
 private tailrec fun Context.findActivity(): Activity? {
     return when (this) {
         is Activity -> this
@@ -90,34 +97,6 @@ private fun openAppDetailsSettings(context: Context) {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK
     }
     context.startActivity(intent)
-}
-
-private const val PREFS_NAME = "gps_tracker_permissions"
-private const val KEY_LOCATION_PERMISSION_REQUESTED = "location_permission_requested"
-
-private fun wasLocationPermissionRequested(context: Context): Boolean {
-    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    return prefs.getBoolean(KEY_LOCATION_PERMISSION_REQUESTED, false)
-}
-
-private fun markLocationPermissionRequested(context: Context) {
-    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit().putBoolean(KEY_LOCATION_PERMISSION_REQUESTED, true).apply()
-}
-
-private fun isLocationPermissionPermanentlyDenied(activity: Activity, context: Context): Boolean {
-    if (!wasLocationPermissionRequested(context)) return false
-
-    val showFineRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-        activity,
-        Manifest.permission.ACCESS_FINE_LOCATION
-    )
-    val showCoarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-        activity,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
-
-    return !showFineRationale && !showCoarseRationale
 }
 
 @Composable
@@ -136,52 +115,66 @@ fun MainScreen(
     val showHistorySheet by viewModel.showHistorySheet.collectAsState()
 
     var hasLocationPerm by remember { mutableStateOf(checkHasLocationPermission(context)) }
-    var openSettingsAfterPermissionResult by remember { mutableStateOf(false) }
+    var hasFineLocationPerm by remember { mutableStateOf(checkHasFineLocationPermission(context)) }
+    var permissionRequestInFlight by remember { mutableStateOf(false) }
+    var hasAutoOpenedSettingsThisSession by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        hasLocationPerm = checkHasLocationPermission(context)
+        if (!permissionRequestInFlight) return@rememberLauncherForActivityResult
+        permissionRequestInFlight = false
 
-        if (!hasLocationPerm && openSettingsAfterPermissionResult && activity != null) {
-            if (isLocationPermissionPermanentlyDenied(activity, context)) {
+        hasLocationPerm = checkHasLocationPermission(context)
+        hasFineLocationPerm = checkHasFineLocationPermission(context)
+        if (hasFineLocationPerm) {
+            hasAutoOpenedSettingsThisSession = false
+            return@rememberLauncherForActivityResult
+        }
+
+        if (activity != null && !hasAutoOpenedSettingsThisSession) {
+            val showFineRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+                activity,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+            val showCoarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+                activity,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+
+            val permissionDialogBlocked = !showFineRationale && !showCoarseRationale
+            if (permissionDialogBlocked) {
+                hasAutoOpenedSettingsThisSession = true
                 openAppDetailsSettings(context)
             }
         }
-
-        openSettingsAfterPermissionResult = false
     }
 
-    fun requestPermissions(fromUserAction: Boolean) {
-        openSettingsAfterPermissionResult = fromUserAction
-
+    fun requestPermissions() {
         val perms = arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
         try {
-            markLocationPermissionRequested(context)
+            permissionRequestInFlight = true
             permissionLauncher.launch(perms)
         } catch (e: Exception) {
+            permissionRequestInFlight = false
             // Fallback to app details settings if direct prompt fails
             try {
                 openAppDetailsSettings(context)
             } catch (_: Exception) {}
-            openSettingsAfterPermissionResult = false
         }
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         hasLocationPerm = checkHasLocationPermission(context)
+        hasFineLocationPerm = checkHasFineLocationPermission(context)
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
-        if (!hasLocationPerm) {
-            if (activity != null && isLocationPermissionPermanentlyDenied(activity, context)) {
-                openAppDetailsSettings(context)
-            } else {
-                requestPermissions(fromUserAction = false)
-            }
+        if (!hasFineLocationPerm) {
+            requestPermissions()
         }
     }
 
@@ -200,12 +193,12 @@ fun MainScreen(
             SingleScreenDashboard(
                 trackingState = trackingState,
                 hasLocationPermission = hasLocationPerm,
-                onRequestPermissions = { requestPermissions(fromUserAction = true) },
+                onRequestPermissions = { requestPermissions() },
                 isDarkTheme = isDarkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
                 onStart = {
-                    if (!hasLocationPerm) {
-                        requestPermissions(fromUserAction = true)
+                    if (!hasFineLocationPerm) {
+                        requestPermissions()
                     } else {
                         viewModel.startTracking()
                     }
