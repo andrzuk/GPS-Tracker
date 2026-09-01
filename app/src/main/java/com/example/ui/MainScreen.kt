@@ -7,7 +7,6 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,7 +38,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -94,6 +92,34 @@ private fun openAppDetailsSettings(context: Context) {
     context.startActivity(intent)
 }
 
+private const val PREFS_NAME = "gps_tracker_permissions"
+private const val KEY_LOCATION_PERMISSION_REQUESTED = "location_permission_requested"
+
+private fun wasLocationPermissionRequested(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(KEY_LOCATION_PERMISSION_REQUESTED, false)
+}
+
+private fun markLocationPermissionRequested(context: Context) {
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit().putBoolean(KEY_LOCATION_PERMISSION_REQUESTED, true).apply()
+}
+
+private fun isLocationPermissionPermanentlyDenied(activity: Activity, context: Context): Boolean {
+    if (!wasLocationPermissionRequested(context)) return false
+
+    val showFineRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+        activity,
+        Manifest.permission.ACCESS_FINE_LOCATION
+    )
+    val showCoarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+        activity,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    )
+
+    return !showFineRationale && !showCoarseRationale
+}
+
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
@@ -118,16 +144,7 @@ fun MainScreen(
         hasLocationPerm = checkHasLocationPermission(context)
 
         if (!hasLocationPerm && openSettingsAfterPermissionResult && activity != null) {
-            val showFineRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-                activity,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
-            val showCoarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-                activity,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-
-            if (!showFineRationale && !showCoarseRationale) {
+            if (isLocationPermissionPermanentlyDenied(activity, context)) {
                 openAppDetailsSettings(context)
             }
         }
@@ -138,14 +155,12 @@ fun MainScreen(
     fun requestPermissions(fromUserAction: Boolean) {
         openSettingsAfterPermissionResult = fromUserAction
 
-        val perms = buildList {
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-            add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }.toTypedArray()
+        val perms = arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
         try {
+            markLocationPermissionRequested(context)
             permissionLauncher.launch(perms)
         } catch (e: Exception) {
             // Fallback to app details settings if direct prompt fails
@@ -160,9 +175,13 @@ fun MainScreen(
         hasLocationPerm = checkHasLocationPermission(context)
     }
 
-    LaunchedEffect(Unit) {
+    LifecycleEventEffect(Lifecycle.Event.ON_START) {
         if (!hasLocationPerm) {
-            requestPermissions(fromUserAction = false)
+            if (activity != null && isLocationPermissionPermanentlyDenied(activity, context)) {
+                openAppDetailsSettings(context)
+            } else {
+                requestPermissions(fromUserAction = false)
+            }
         }
     }
 
