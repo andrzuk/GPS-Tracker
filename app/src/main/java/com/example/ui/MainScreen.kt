@@ -1,7 +1,9 @@
 package com.example.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -42,6 +44,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +53,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -75,12 +79,29 @@ fun checkHasLocationPermission(context: Context): Boolean {
     return fineLocation || coarseLocation
 }
 
+private tailrec fun Context.findActivity(): Activity? {
+    return when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
+}
+
+private fun openAppDetailsSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.fromParts("package", context.packageName, null)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    }
+    context.startActivity(intent)
+}
+
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val trackingState by viewModel.trackingState.collectAsState()
     val savedTracks by viewModel.savedTracks.collectAsState()
     val isDarkTheme by viewModel.isDarkTheme.collectAsState()
@@ -90,6 +111,7 @@ fun MainScreen(
     val showHistorySheet by viewModel.showHistorySheet.collectAsState()
 
     var hasLocationPerm by remember { mutableStateOf(checkHasLocationPermission(context)) }
+    var hasRequestedLocationPermission by rememberSaveable { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -97,7 +119,27 @@ fun MainScreen(
         hasLocationPerm = checkHasLocationPermission(context)
     }
 
+    fun shouldOpenSettingsForLocationPermission(): Boolean {
+        if (hasLocationPerm || !hasRequestedLocationPermission || activity == null) return false
+
+        val showFineRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+            activity,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+        val showCoarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+            activity,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+
+        return !showFineRationale && !showCoarseRationale
+    }
+
     fun requestPermissions() {
+        if (shouldOpenSettingsForLocationPermission()) {
+            openAppDetailsSettings(context)
+            return
+        }
+
         val perms = buildList {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
             add(Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -106,15 +148,12 @@ fun MainScreen(
             }
         }.toTypedArray()
         try {
+            hasRequestedLocationPermission = true
             permissionLauncher.launch(perms)
         } catch (e: Exception) {
             // Fallback to app details settings if direct prompt fails
             try {
-                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.fromParts("package", context.packageName, null)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                context.startActivity(intent)
+                openAppDetailsSettings(context)
             } catch (_: Exception) {}
         }
     }
