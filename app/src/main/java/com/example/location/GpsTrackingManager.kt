@@ -7,6 +7,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import com.example.data.models.GpsSignalQuality
 import com.example.data.models.LocationPoint
@@ -49,7 +50,9 @@ class GpsTrackingManager private constructor(private val context: Context) {
     private var timerJob: Job? = null
 
     private var lastRawLocation: Location? = null
+    private var lastLocationProcessedElapsedMillis = 0L
     private var isListeningGps = false
+    private var isSystemFallbackActive = false
 
     private val fusedLocationCallback = object : LocationCallback() {
         override fun onLocationResult(locationResult: LocationResult) {
@@ -86,13 +89,12 @@ class GpsTrackingManager private constructor(private val context: Context) {
         if (isListeningGps) return
         isListeningGps = true
 
-        // 1. Try Google Play Services Fused Location
         try {
             val locationRequest = LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
-                1000L
+                5000L
             ).apply {
-                setMinUpdateIntervalMillis(500L)
+                setMinUpdateIntervalMillis(5000L)
                 setMinUpdateDistanceMeters(0.5f)
                 setWaitForAccurateLocation(false)
             }.build()
@@ -118,19 +120,18 @@ class GpsTrackingManager private constructor(private val context: Context) {
             Log.w(TAG, "Exception in fusedLocationClient: ${e.message}, trying system location manager")
             requestSystemLocationFallback()
         }
-
-        // 2. Also register system location manager as reliable fallback
-        requestSystemLocationFallback()
     }
 
     @SuppressLint("MissingPermission")
     private fun requestSystemLocationFallback() {
+        if (isSystemFallbackActive) return
         val lm = systemLocationManager ?: return
         try {
+            isSystemFallbackActive = true
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 lm.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    1000L,
+                    5000L,
                     0.5f,
                     systemLocationListener,
                     Looper.getMainLooper()
@@ -139,7 +140,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 lm.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
-                    1000L,
+                    5000L,
                     0.5f,
                     systemLocationListener,
                     Looper.getMainLooper()
@@ -152,8 +153,10 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 processNewLocation(best)
             }
         } catch (e: SecurityException) {
+            isSystemFallbackActive = false
             Log.w(TAG, "SecurityException in system LocationManager: ${e.message}")
         } catch (e: Exception) {
+            isSystemFallbackActive = false
             Log.w(TAG, "Exception in system LocationManager: ${e.message}")
         }
     }
@@ -161,6 +164,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
     fun stopGpsUpdates() {
         if (!isListeningGps) return
         isListeningGps = false
+        isSystemFallbackActive = false
         try {
             fusedLocationClient.removeLocationUpdates(fusedLocationCallback)
         } catch (e: Exception) {
@@ -176,6 +180,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
     fun startTracking() {
         if (_trackingState.value.status == TrackingStatus.TRACKING) return
 
+        lastRawLocation = null
+        lastLocationProcessedElapsedMillis = 0L
         _trackingState.update { current ->
             current.copy(status = TrackingStatus.TRACKING)
         }
@@ -267,6 +273,10 @@ class GpsTrackingManager private constructor(private val context: Context) {
     }
 
     private fun processNewLocation(location: Location) {
+        val nowElapsedMillis = SystemClock.elapsedRealtime()
+        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < 5000L) return
+        lastLocationProcessedElapsedMillis = nowElapsedMillis
+
         val accuracy = location.accuracy
         val signalQuality = when {
             accuracy <= 5f -> GpsSignalQuality.EXCELLENT
@@ -275,17 +285,10 @@ class GpsTrackingManager private constructor(private val context: Context) {
             else -> GpsSignalQuality.SEARCHING
         }
 
-        // Calculate speed in km/h
-        val rawSpeedKmh = if (location.hasSpeed() && location.speed >= 0) {
-            location.speed * 3.6f
-        } else {
-            0.0f
-        }
-
         val point = LocationPoint(
             latitude = location.latitude,
             longitude = location.longitude,
-            speedKmh = rawSpeedKmh,
+            speedKmh = 0.0f,
             altitude = if (location.hasAltitude()) location.altitude else 0.0,
             timestamp = location.time,
             accuracy = accuracy
@@ -306,13 +309,16 @@ class GpsTrackingManager private constructor(private val context: Context) {
             val lastLoc = lastRawLocation
             var distanceDelta = 0.0
             var elevationDelta = 0.0
+            var calculatedSpeedKmh = 0.0f
 
             if (lastLoc != null) {
                 val dist = location.distanceTo(lastLoc).toDouble()
+                val elapsedMillis = location.time - lastLoc.time
+                val maximumPlausibleDistance = elapsedMillis * 55.56 / 1000.0
 
-                // Filter out small jitter (<1m with low speed) or teleport jumps
-                if (dist > 1.2 && dist < 200.0) {
+                if (elapsedMillis > 0 && dist > 1.2 && dist <= maximumPlausibleDistance) {
                     distanceDelta = dist
+                    calculatedSpeedKmh = (dist / elapsedMillis * 3600.0).toFloat()
                     if (location.hasAltitude() && lastLoc.hasAltitude()) {
                         val diffAlt = location.altitude - lastLoc.altitude
                         if (diffAlt > 0.5) {
@@ -324,7 +330,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             lastRawLocation = location
 
             val newDistance = current.distanceMeters + distanceDelta
-            val effectiveSpeed = if (rawSpeedKmh > 0.8f) rawSpeedKmh else 0.0f
+            val effectiveSpeed = if (calculatedSpeedKmh > 0.8f) calculatedSpeedKmh else 0.0f
             val newMaxSpeed = max(current.maxSpeedKmh, effectiveSpeed)
 
             val newAvgSpeed = if (current.durationSeconds > 0 && newDistance > 0) {
