@@ -123,9 +123,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleTheme() {
         _isDarkTheme.update { current ->
             when (current) {
-                null -> true
+                null -> false
                 true -> false
-                false -> null
+                false -> true
             }
         }
     }

@@ -82,7 +82,7 @@ fun SpeedGauge(
         modifier = modifier
             .fillMaxWidth()
             .testTag("speed_gauge_surface"),
-        shape = RoundedCornerShape(32.dp),
+        shape = RoundedCornerShape(24.dp),
         color = BentoHeroLilac,
         contentColor = BentoHeroOnLilac,
         border = BorderStroke(1.dp, BentoHeroLilac.copy(alpha = 0.8f)),
@@ -91,7 +91,7 @@ fun SpeedGauge(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 20.dp),
+                .padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Bento Header: Status badge & Title

@@ -315,8 +315,16 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 val dist = location.distanceTo(lastLoc).toDouble()
                 val elapsedMillis = location.time - lastLoc.time
                 val maximumPlausibleDistance = elapsedMillis * 55.56 / 1000.0
+                val minimumReliableDistance = max(
+                    2.0,
+                    (location.accuracy + lastLoc.accuracy).toDouble()
+                )
 
-                if (elapsedMillis > 0 && dist > 1.2 && dist <= maximumPlausibleDistance) {
+                if (
+                    elapsedMillis > 0 &&
+                    dist >= minimumReliableDistance &&
+                    dist <= maximumPlausibleDistance
+                ) {
                     distanceDelta = dist
                     calculatedSpeedKmh = (dist / elapsedMillis * 3600.0).toFloat()
                     if (location.hasAltitude() && lastLoc.hasAltitude()) {
