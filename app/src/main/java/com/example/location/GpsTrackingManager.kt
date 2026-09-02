@@ -180,11 +180,28 @@ class GpsTrackingManager private constructor(private val context: Context) {
     fun startTracking() {
         if (_trackingState.value.status == TrackingStatus.TRACKING) return
 
+        timerJob?.cancel()
+        timerJob = null
         lastRawLocation = null
         lastLocationProcessedElapsedMillis = 0L
-        _trackingState.update { current ->
-            current.copy(status = TrackingStatus.TRACKING)
-        }
+
+        val currentLoc = _trackingState.value.currentLocation
+
+        _trackingState.value = TrackingState(
+            status = TrackingStatus.TRACKING,
+            currentSpeedKmh = 0.0f,
+            avgSpeedKmh = 0.0f,
+            maxSpeedKmh = 0.0f,
+            distanceMeters = 0.0,
+            durationSeconds = 0L,
+            currentLocation = currentLoc,
+            routePoints = if (currentLoc != null) listOf(currentLoc) else emptyList(),
+            gpsAccuracyMeters = _trackingState.value.gpsAccuracyMeters,
+            signalQuality = _trackingState.value.signalQuality,
+            altitudeMeters = currentLoc?.altitude ?: 0.0,
+            elevationGainMeters = 0.0,
+            lastUpdatedTimestamp = System.currentTimeMillis()
+        )
         startGpsUpdates()
         startTimer()
     }
