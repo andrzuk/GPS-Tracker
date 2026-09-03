@@ -6,6 +6,7 @@ import android.content.Context
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.os.SystemClock
@@ -30,7 +31,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.min
 import kotlin.math.max
 
 class GpsTrackingManager private constructor(private val context: Context) {
@@ -52,6 +52,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
     private var timerJob: Job? = null
 
     private var lastRawLocation: Location? = null
+    private var lastDistanceLocation: Location? = null
     private var lastLocationProcessedElapsedMillis = 0L
     private var isListeningGps = false
     private var isSystemFallbackActive = false
@@ -190,6 +191,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         timerJob?.cancel()
         timerJob = null
         lastRawLocation = null
+        lastDistanceLocation = null
         lastLocationProcessedElapsedMillis = 0L
 
         val currentLoc = _trackingState.value.currentLocation
@@ -224,6 +226,9 @@ class GpsTrackingManager private constructor(private val context: Context) {
         }
         timerJob?.cancel()
         timerJob = null
+        stopGpsUpdates()
+        lastRawLocation = null
+        lastDistanceLocation = null
     }
 
     fun resumeTracking() {
@@ -245,12 +250,16 @@ class GpsTrackingManager private constructor(private val context: Context) {
         }
         timerJob?.cancel()
         timerJob = null
+        stopGpsUpdates()
+        lastRawLocation = null
+        lastDistanceLocation = null
     }
 
     fun resetCounters() {
         timerJob?.cancel()
         timerJob = null
         lastRawLocation = null
+        lastDistanceLocation = null
 
         val currentLoc = _trackingState.value.currentLocation
 
@@ -313,6 +322,11 @@ class GpsTrackingManager private constructor(private val context: Context) {
         } else {
             0.0f
         }
+        val hasReliableReportedSpeed = location.hasSpeed() &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                !location.hasSpeedAccuracy() ||
+                reportedSpeedKmh - location.speedAccuracyMetersPerSecond * 3.6f >
+                    STATIONARY_SPEED_THRESHOLD_KMH)
 
         val point = LocationPoint(
             latitude = location.latitude,
@@ -336,6 +350,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             }
 
             val lastLoc = lastRawLocation
+            val lastDistanceLoc = lastDistanceLocation
             var distanceDelta = 0.0
             var elevationDelta = 0.0
             var calculatedSpeedKmh = 0.0f
@@ -344,14 +359,14 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 val dist = location.distanceTo(lastLoc).toDouble()
                 val elapsedMillis = location.time - lastLoc.time
                 val maximumPlausibleDistance = elapsedMillis * 55.56 / 1000.0
-                val minimumReliableDistance = min(
-                    1.0,
-                    (location.accuracy + lastLoc.accuracy).toDouble()
+                val minimumSpeedCalculationDistance = max(
+                    3.0,
+                    max(location.accuracy, lastLoc.accuracy).toDouble()
                 )
 
                 if (
                     elapsedMillis > 0 &&
-                    dist >= minimumReliableDistance &&
+                    dist >= minimumSpeedCalculationDistance &&
                     dist <= maximumPlausibleDistance
                 ) {
                     distanceDelta = dist
@@ -364,9 +379,26 @@ class GpsTrackingManager private constructor(private val context: Context) {
                     }
                 }
             }
+            if (lastDistanceLoc != null) {
+                val distanceFromLastAcceptedPoint = location.distanceTo(lastDistanceLoc).toDouble()
+                val minimumReliableDistance = max(
+                    3.0,
+                    max(location.accuracy, lastDistanceLoc.accuracy).toDouble()
+                )
+
+                if (distanceFromLastAcceptedPoint >= minimumReliableDistance) {
+                    distanceDelta = distanceFromLastAcceptedPoint
+                }
+            }
             lastRawLocation = location
 
-            val measuredSpeedKmh = if (location.hasSpeed()) reportedSpeedKmh else calculatedSpeedKmh
+            val measuredSpeedKmh = if (hasReliableReportedSpeed) {
+                reportedSpeedKmh
+            } else if (!location.hasSpeed()) {
+                calculatedSpeedKmh
+            } else {
+                0.0f
+            }
             val effectiveSpeed = when {
                 measuredSpeedKmh <= STATIONARY_SPEED_THRESHOLD_KMH -> 0.0f
                 current.currentSpeedKmh <= 0.001f &&
@@ -379,6 +411,11 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 current.distanceMeters + distanceDelta
             } else {
                 current.distanceMeters
+            }
+            if (effectiveSpeed > 0.0f && distanceDelta > 0.0) {
+                lastDistanceLocation = location
+            } else if (lastDistanceLocation == null) {
+                lastDistanceLocation = location
             }
             val newMaxSpeed = max(current.maxSpeedKmh, effectiveSpeed)
 
