@@ -76,6 +76,11 @@ class GpsTrackingManager private constructor(private val context: Context) {
     }
 
     companion object {
+        private const val MAX_REASONABLE_SPEED_KMH = 200.0f
+        private const val SPEED_SMOOTHING_FACTOR = 0.35f
+        private const val STATIONARY_SPEED_THRESHOLD_KMH = 2.0f
+        private const val MOVEMENT_SPEED_THRESHOLD_KMH = 3.0f
+
         @Volatile
         private var instance: GpsTrackingManager? = null
 
@@ -303,11 +308,16 @@ class GpsTrackingManager private constructor(private val context: Context) {
             accuracy <= 30f -> GpsSignalQuality.WEAK
             else -> GpsSignalQuality.SEARCHING
         }
+        val reportedSpeedKmh = if (location.hasSpeed()) {
+            (location.speed * 3.6f).coerceIn(0.0f, MAX_REASONABLE_SPEED_KMH)
+        } else {
+            0.0f
+        }
 
         val point = LocationPoint(
             latitude = location.latitude,
             longitude = location.longitude,
-            speedKmh = 0.0f,
+            speedKmh = reportedSpeedKmh,
             altitude = if (location.hasAltitude()) location.altitude else 0.0,
             timestamp = location.time,
             accuracy = accuracy
@@ -356,8 +366,20 @@ class GpsTrackingManager private constructor(private val context: Context) {
             }
             lastRawLocation = location
 
-            val newDistance = current.distanceMeters + distanceDelta
-            val effectiveSpeed = if (calculatedSpeedKmh > 0.001f) calculatedSpeedKmh else 0.0f
+            val measuredSpeedKmh = if (location.hasSpeed()) reportedSpeedKmh else calculatedSpeedKmh
+            val effectiveSpeed = when {
+                measuredSpeedKmh <= STATIONARY_SPEED_THRESHOLD_KMH -> 0.0f
+                current.currentSpeedKmh <= 0.001f &&
+                    measuredSpeedKmh < MOVEMENT_SPEED_THRESHOLD_KMH -> 0.0f
+                current.currentSpeedKmh <= 0.001f -> measuredSpeedKmh
+                else -> current.currentSpeedKmh * (1.0f - SPEED_SMOOTHING_FACTOR) +
+                    measuredSpeedKmh * SPEED_SMOOTHING_FACTOR
+            }
+            val newDistance = if (effectiveSpeed > 0.0f) {
+                current.distanceMeters + distanceDelta
+            } else {
+                current.distanceMeters
+            }
             val newMaxSpeed = max(current.maxSpeedKmh, effectiveSpeed)
 
             val newAvgSpeed = if (current.durationSeconds > 0 && newDistance > 0) {
