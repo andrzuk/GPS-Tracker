@@ -30,7 +30,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val trackingState: StateFlow<TrackingState> = gpsManager.trackingState
 
     val savedTracks: StateFlow<List<TrackEntity>> = trackDao.getAllTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(1000), emptyList())
 
     private val _isDarkTheme = MutableStateFlow<Boolean?>(null) // null = system default
     val isDarkTheme: StateFlow<Boolean?> = _isDarkTheme.asStateFlow()

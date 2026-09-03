@@ -1,6 +1,6 @@
 package com.example.location
 
-import android.annotation.SuppressLint
+import android.app.Application
 import android.content.Context
 import android.location.Location
 import android.location.LocationListener
@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.min
 import kotlin.math.max
 
 class GpsTrackingManager private constructor(private val context: Context) {
@@ -92,9 +93,9 @@ class GpsTrackingManager private constructor(private val context: Context) {
         try {
             val locationRequest = LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
-                5000L
+                1000L
             ).apply {
-                setMinUpdateIntervalMillis(5000L)
+                setMinUpdateIntervalMillis(500L)
                 setMinUpdateDistanceMeters(0.5f)
                 setWaitForAccurateLocation(false)
             }.build()
@@ -131,7 +132,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 lm.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    5000L,
+                    1000L,
                     0.5f,
                     systemLocationListener,
                     Looper.getMainLooper()
@@ -140,7 +141,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 lm.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
-                    5000L,
+                    1000L,
                     0.5f,
                     systemLocationListener,
                     Looper.getMainLooper()
@@ -291,7 +292,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
     private fun processNewLocation(location: Location) {
         val nowElapsedMillis = SystemClock.elapsedRealtime()
-        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < 5000L) return
+        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < 1000L) return
         lastLocationProcessedElapsedMillis = nowElapsedMillis
 
         val accuracy = location.accuracy
@@ -332,8 +333,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 val dist = location.distanceTo(lastLoc).toDouble()
                 val elapsedMillis = location.time - lastLoc.time
                 val maximumPlausibleDistance = elapsedMillis * 55.56 / 1000.0
-                val minimumReliableDistance = max(
-                    2.0,
+                val minimumReliableDistance = min(
+                    1.0,
                     (location.accuracy + lastLoc.accuracy).toDouble()
                 )
 
@@ -355,7 +356,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             lastRawLocation = location
 
             val newDistance = current.distanceMeters + distanceDelta
-            val effectiveSpeed = if (calculatedSpeedKmh > 0.8f) calculatedSpeedKmh else 0.0f
+            val effectiveSpeed = if (calculatedSpeedKmh > 0.001f) calculatedSpeedKmh else 0.0f
             val newMaxSpeed = max(current.maxSpeedKmh, effectiveSpeed)
 
             val newAvgSpeed = if (current.durationSeconds > 0 && newDistance > 0) {
