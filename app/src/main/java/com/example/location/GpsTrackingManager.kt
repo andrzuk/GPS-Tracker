@@ -1,5 +1,6 @@
 package com.example.location
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.Context
 import android.location.Location
