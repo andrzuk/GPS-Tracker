@@ -84,7 +84,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         private const val EXIT_STATIONARY_SPEED_KMH = 2.2f
         private const val ENTER_STATIONARY_SPEED_KMH = 1.8f
         private const val MIN_EXIT_STATIONARY_DISTANCE_METERS = 5.0
-        private const val LOCATION_UPDATE_INTERVAL_MILLIS = 1000L
+        private const val LOCATION_UPDATE_INTERVAL_MILLIS = 500L
         private const val MAX_VALID_ACCURACY_METERS = 30.0f
         private const val MIN_DISTANCE_ACCUMULATION_METERS = 1.0
         private const val MIN_ROUTE_POINT_DISTANCE_METERS = 3.0
