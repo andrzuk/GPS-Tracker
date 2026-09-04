@@ -389,7 +389,10 @@ class GpsTrackingManager private constructor(private val context: Context) {
                     }
                 }
             }
-            val measuredSpeedKmh = if (hasReliableReportedSpeed) {
+            val measuredSpeedKmh = if (
+                hasReliableReportedSpeed &&
+                calculatedSpeedKmh > STATIONARY_SPEED_THRESHOLD_KMH
+            ) {
                 reportedSpeedKmh
             } else {
                 calculatedSpeedKmh
