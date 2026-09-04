@@ -54,8 +54,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
     private var lastTrackingLocation: Location? = null
     private var stationaryAnchorLocation: Location? = null
     private var isStationaryLockActive = true
+    private var consecutiveMovingCount = 0
     private var lastLocationProcessedElapsedMillis = 0L
-    private var movingDurationSeconds = 0L
     private var isListeningGps = false
     private var isSystemFallbackActive = false
 
@@ -81,9 +81,9 @@ class GpsTrackingManager private constructor(private val context: Context) {
     companion object {
         private const val MAX_REASONABLE_SPEED_KMH = 160.0f
         private const val SPEED_SMOOTHING_FACTOR = 0.35f
-        private const val EXIT_STATIONARY_SPEED_KMH = 2.2f
-        private const val ENTER_STATIONARY_SPEED_KMH = 1.8f
-        private const val MIN_EXIT_STATIONARY_DISTANCE_METERS = 5.0
+        private const val EXIT_STATIONARY_SPEED_KMH = 2.8f
+        private const val ENTER_STATIONARY_SPEED_KMH = 1.5f
+        private const val MIN_EXIT_STATIONARY_DISTANCE_METERS = 8.0
         private const val LOCATION_UPDATE_INTERVAL_MILLIS = 500L
         private const val MAX_VALID_ACCURACY_METERS = 30.0f
         private const val MIN_DISTANCE_ACCUMULATION_METERS = 1.0
@@ -200,8 +200,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
         lastTrackingLocation = null
         stationaryAnchorLocation = null
         isStationaryLockActive = true
+        consecutiveMovingCount = 0
         lastLocationProcessedElapsedMillis = 0L
-        movingDurationSeconds = 0L
 
         val currentLoc = _trackingState.value.currentLocation
 
@@ -238,6 +238,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         lastTrackingLocation = null
         stationaryAnchorLocation = null
         isStationaryLockActive = true
+        consecutiveMovingCount = 0
     }
 
     fun resumeTracking() {
@@ -249,6 +250,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         lastTrackingLocation = null
         stationaryAnchorLocation = null
         isStationaryLockActive = true
+        consecutiveMovingCount = 0
         startGpsUpdates()
         startTimer()
     }
@@ -265,6 +267,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         lastTrackingLocation = null
         stationaryAnchorLocation = null
         isStationaryLockActive = true
+        consecutiveMovingCount = 0
     }
 
     fun resetCounters() {
@@ -273,7 +276,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         lastTrackingLocation = null
         stationaryAnchorLocation = null
         isStationaryLockActive = true
-        movingDurationSeconds = 0L
+        consecutiveMovingCount = 0
 
         val currentLoc = _trackingState.value.currentLocation
 
@@ -302,20 +305,13 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 _trackingState.update { current ->
                     if (current.status != TrackingStatus.TRACKING) return@update current
                     val newDuration = current.durationSeconds + 1
-                    if (!isStationaryLockActive && current.currentSpeedKmh >= ENTER_STATIONARY_SPEED_KMH) {
-                        movingDurationSeconds++
-                    }
-                    val effectiveHours = if (movingDurationSeconds > 0) {
-                        movingDurationSeconds / 3600.0
-                    } else if (newDuration > 0) {
-                        newDuration / 3600.0
+                    val newAvgSpeed = if (newDuration > 0 && current.distanceMeters > 0) {
+                        val hours = newDuration / 3600.0
+                        val km = current.distanceMeters / 1000.0
+                        val calculated = (km / hours).toFloat()
+                        if (current.maxSpeedKmh > 0f) calculated.coerceAtMost(current.maxSpeedKmh) else calculated
                     } else {
-                        0.0
-                    }
-                    val newAvgSpeed = if (effectiveHours > 0 && current.distanceMeters > 0) {
-                        ((current.distanceMeters / 1000.0) / effectiveHours).toFloat()
-                    } else {
-                        current.avgSpeedKmh
+                        0.0f
                     }
                     current.copy(
                         durationSeconds = newDuration,
@@ -329,7 +325,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
     private fun processNewLocation(location: Location) {
         val nowElapsedMillis = SystemClock.elapsedRealtime()
-        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < 350L) return
+        val minThrottleMillis = (LOCATION_UPDATE_INTERVAL_MILLIS / 2).coerceAtLeast(150L)
+        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < minThrottleMillis) return
         lastLocationProcessedElapsedMillis = nowElapsedMillis
 
         val accuracy = location.accuracy
@@ -343,14 +340,15 @@ class GpsTrackingManager private constructor(private val context: Context) {
         // 1. Raw speed evaluation with noise rejection
         val rawSpeedKmh: Float = if (location.hasSpeed()) {
             val speedMps = location.speed
-            val isAccurate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy()) {
-                val acc = location.speedAccuracyMetersPerSecond
-                speedMps > acc && acc < 1.5f
+            val speedKmh = speedMps * 3.6f
+            val isSpeedNoise = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy()) {
+                val accKmh = location.speedAccuracyMetersPerSecond * 3.6f
+                speedKmh <= accKmh || accKmh > 4.0f
             } else {
-                speedMps >= (ENTER_STATIONARY_SPEED_KMH / 3.6f)
+                speedKmh < ENTER_STATIONARY_SPEED_KMH
             }
-            if (isAccurate) {
-                (speedMps * 3.6f).coerceIn(0.0f, MAX_REASONABLE_SPEED_KMH)
+            if (!isSpeedNoise && speedKmh >= ENTER_STATIONARY_SPEED_KMH) {
+                speedKmh.coerceIn(0.0f, MAX_REASONABLE_SPEED_KMH)
             } else {
                 0.0f
             }
@@ -401,17 +399,24 @@ class GpsTrackingManager private constructor(private val context: Context) {
             // 2. Stationary Lock (Deadband) state machine
             val currentAnchor = stationaryAnchorLocation ?: location.also { stationaryAnchorLocation = it }
             val distanceFromAnchor = location.distanceTo(currentAnchor).toDouble()
-            val minExitDistance = max(MIN_EXIT_STATIONARY_DISTANCE_METERS, (accuracy * 0.75).toDouble())
+            val minExitDistance = max(MIN_EXIT_STATIONARY_DISTANCE_METERS, (accuracy * 1.25).toDouble())
 
             if (isStationaryLockActive) {
                 // Must have both real forward speed and physical displacement exceeding the cluster radius
-                val hasBrokenOut = rawSpeedKmh >= EXIT_STATIONARY_SPEED_KMH && distanceFromAnchor >= minExitDistance
-                if (hasBrokenOut) {
-                    isStationaryLockActive = false
-                    lastTrackingLocation = currentAnchor
+                val appearsMoving = rawSpeedKmh >= EXIT_STATIONARY_SPEED_KMH && distanceFromAnchor >= minExitDistance
+                if (appearsMoving) {
+                    consecutiveMovingCount++
+                    if (consecutiveMovingCount >= 2) {
+                        // Confirmed genuine movement! Break out of lock.
+                        isStationaryLockActive = false
+                        consecutiveMovingCount = 0
+                        // Set tracking reference to current location so drift distance from anchor is NOT added!
+                        lastTrackingLocation = location
+                    }
                 } else {
-                    // Update anchor gently if drift is very close to keep centroid accurate
-                    if (distanceFromAnchor < minExitDistance * 0.4) {
+                    consecutiveMovingCount = 0
+                    // Drift within cluster: update anchor gently to stay centered
+                    if (distanceFromAnchor < minExitDistance * 0.5) {
                         stationaryAnchorLocation = location
                     }
                 }
@@ -419,6 +424,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 // Currently moving: check if stopped
                 if (rawSpeedKmh < ENTER_STATIONARY_SPEED_KMH) {
                     isStationaryLockActive = true
+                    consecutiveMovingCount = 0
                     stationaryAnchorLocation = location
                     lastTrackingLocation = location
                 }
@@ -472,6 +478,16 @@ class GpsTrackingManager private constructor(private val context: Context) {
             val newMaxSpeed = max(current.maxSpeedKmh, effectiveSpeed)
             val newElevation = current.elevationGainMeters + elevationDelta
 
+            // Recalculate average speed, strictly bounded by maxSpeed
+            val newAvgSpeed = if (current.durationSeconds > 0 && newDistance > 0) {
+                val hours = current.durationSeconds / 3600.0
+                val km = newDistance / 1000.0
+                val calculated = (km / hours).toFloat()
+                if (newMaxSpeed > 0f) calculated.coerceAtMost(newMaxSpeed) else calculated
+            } else {
+                0.0f
+            }
+
             // 5. Route points: append if first point or if moved at least 3m from last point
             val updatedPoints = if (current.routePoints.isEmpty()) {
                 listOf(point)
@@ -494,6 +510,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
             current.copy(
                 currentSpeedKmh = effectiveSpeed,
+                avgSpeedKmh = newAvgSpeed,
                 maxSpeedKmh = newMaxSpeed,
                 distanceMeters = newDistance,
                 currentLocation = point,
