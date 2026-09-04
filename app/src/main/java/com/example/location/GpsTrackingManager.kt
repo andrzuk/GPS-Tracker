@@ -79,8 +79,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
     companion object {
         private const val MAX_REASONABLE_SPEED_KMH = 200.0f
         private const val SPEED_SMOOTHING_FACTOR = 0.35f
-        private const val STATIONARY_SPEED_THRESHOLD_KMH = 2.0f
-        private const val MOVEMENT_SPEED_THRESHOLD_KMH = 3.0f
+        private const val STATIONARY_SPEED_THRESHOLD_KMH = 0.5f
+        private const val MOVEMENT_SPEED_THRESHOLD_KMH = 1.0f
         private const val LOCATION_UPDATE_INTERVAL_MILLIS = 500L
 
         @Volatile
