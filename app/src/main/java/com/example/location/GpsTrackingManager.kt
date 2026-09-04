@@ -51,7 +51,6 @@ class GpsTrackingManager private constructor(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.Default + Job())
     private var timerJob: Job? = null
 
-    private var lastRawLocation: Location? = null
     private var lastDistanceLocation: Location? = null
     private var lastLocationProcessedElapsedMillis = 0L
     private var movingDurationMillis = 0L
@@ -195,7 +194,6 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
         timerJob?.cancel()
         timerJob = null
-        lastRawLocation = null
         lastDistanceLocation = null
         lastLocationProcessedElapsedMillis = 0L
         movingDurationMillis = 0L
@@ -233,7 +231,6 @@ class GpsTrackingManager private constructor(private val context: Context) {
         timerJob?.cancel()
         timerJob = null
         stopGpsUpdates()
-        lastRawLocation = null
         lastDistanceLocation = null
     }
 
@@ -257,14 +254,12 @@ class GpsTrackingManager private constructor(private val context: Context) {
         timerJob?.cancel()
         timerJob = null
         stopGpsUpdates()
-        lastRawLocation = null
         lastDistanceLocation = null
     }
 
     fun resetCounters() {
         timerJob?.cancel()
         timerJob = null
-        lastRawLocation = null
         lastDistanceLocation = null
         movingDurationMillis = 0L
 
@@ -310,8 +305,6 @@ class GpsTrackingManager private constructor(private val context: Context) {
         lastLocationProcessedElapsedMillis = nowElapsedMillis
 
         val accuracy = location.accuracy
-        if (accuracy > MAX_WALKING_LOCATION_ACCURACY_METERS) return
-
         val signalQuality = when {
             accuracy <= 5f -> GpsSignalQuality.EXCELLENT
             accuracy <= 15f -> GpsSignalQuality.GOOD
@@ -337,6 +330,19 @@ class GpsTrackingManager private constructor(private val context: Context) {
             timestamp = location.time,
             accuracy = accuracy
         )
+
+        if (accuracy > MAX_WALKING_LOCATION_ACCURACY_METERS) {
+            _trackingState.update { current ->
+                current.copy(
+                    currentLocation = point,
+                    gpsAccuracyMeters = accuracy,
+                    signalQuality = signalQuality,
+                    altitudeMeters = point.altitude,
+                    lastUpdatedTimestamp = System.currentTimeMillis()
+                )
+            }
+            return
+        }
 
         _trackingState.update { current ->
             if (current.status != TrackingStatus.TRACKING) {
@@ -383,8 +389,6 @@ class GpsTrackingManager private constructor(private val context: Context) {
                     }
                 }
             }
-            lastRawLocation = location
-
             val measuredSpeedKmh = if (hasReliableReportedSpeed) {
                 reportedSpeedKmh
             } else {
@@ -407,6 +411,10 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 movingDurationMillis += movingDurationDeltaMillis
             }
             if (effectiveSpeed > 0.0f && distanceDelta > 0.0) {
+                lastDistanceLocation = location
+            } else if (location.hasSpeed() &&
+                reportedSpeedKmh <= STATIONARY_SPEED_THRESHOLD_KMH
+            ) {
                 lastDistanceLocation = location
             } else if (lastDistanceLocation == null) {
                 lastDistanceLocation = location
