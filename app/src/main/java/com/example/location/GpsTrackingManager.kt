@@ -51,9 +51,10 @@ class GpsTrackingManager private constructor(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.Default + Job())
     private var timerJob: Job? = null
 
-    private var lastDistanceLocation: Location? = null
+    private var lastTrackingLocation: Location? = null
+    private var lastRawLocation: Location? = null
     private var lastLocationProcessedElapsedMillis = 0L
-    private var movingDurationMillis = 0L
+    private var movingDurationSeconds = 0L
     private var isListeningGps = false
     private var isSystemFallbackActive = false
 
@@ -77,14 +78,13 @@ class GpsTrackingManager private constructor(private val context: Context) {
     }
 
     companion object {
-        private const val MAX_REASONABLE_SPEED_KMH = 200.0f
+        private const val MAX_REASONABLE_SPEED_KMH = 160.0f
         private const val SPEED_SMOOTHING_FACTOR = 0.35f
-        private const val STATIONARY_SPEED_THRESHOLD_KMH = 0.5f
-        private const val MOVEMENT_SPEED_THRESHOLD_KMH = 1.0f
-        private const val LOCATION_UPDATE_INTERVAL_MILLIS = 500L
-        private const val MAX_WALKING_LOCATION_ACCURACY_METERS = 25.0f
-        private const val MIN_WALKING_DISTANCE_METERS = 1.5
-        private const val ACCURACY_DISTANCE_FACTOR = 0.3
+        private const val STATIONARY_SPEED_THRESHOLD_KMH = 0.8f
+        private const val LOCATION_UPDATE_INTERVAL_MILLIS = 1000L
+        private const val MAX_VALID_ACCURACY_METERS = 30.0f
+        private const val MIN_DISTANCE_ACCUMULATION_METERS = 1.0
+        private const val MIN_ROUTE_POINT_DISTANCE_METERS = 3.0
 
         @Volatile
         private var instance: GpsTrackingManager? = null
@@ -194,9 +194,10 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
         timerJob?.cancel()
         timerJob = null
-        lastDistanceLocation = null
+        lastTrackingLocation = null
+        lastRawLocation = null
         lastLocationProcessedElapsedMillis = 0L
-        movingDurationMillis = 0L
+        movingDurationSeconds = 0L
 
         val currentLoc = _trackingState.value.currentLocation
 
@@ -230,8 +231,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         }
         timerJob?.cancel()
         timerJob = null
-        stopGpsUpdates()
-        lastDistanceLocation = null
+        lastTrackingLocation = null
     }
 
     fun resumeTracking() {
@@ -240,6 +240,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         _trackingState.update { current ->
             current.copy(status = TrackingStatus.TRACKING)
         }
+        lastTrackingLocation = null
         startGpsUpdates()
         startTimer()
     }
@@ -253,15 +254,15 @@ class GpsTrackingManager private constructor(private val context: Context) {
         }
         timerJob?.cancel()
         timerJob = null
-        stopGpsUpdates()
-        lastDistanceLocation = null
+        lastTrackingLocation = null
     }
 
     fun resetCounters() {
         timerJob?.cancel()
         timerJob = null
-        lastDistanceLocation = null
-        movingDurationMillis = 0L
+        lastTrackingLocation = null
+        lastRawLocation = null
+        movingDurationSeconds = 0L
 
         val currentLoc = _trackingState.value.currentLocation
 
@@ -290,8 +291,24 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 _trackingState.update { current ->
                     if (current.status != TrackingStatus.TRACKING) return@update current
                     val newDuration = current.durationSeconds + 1
+                    if (current.currentSpeedKmh >= STATIONARY_SPEED_THRESHOLD_KMH) {
+                        movingDurationSeconds++
+                    }
+                    val effectiveHours = if (movingDurationSeconds > 0) {
+                        movingDurationSeconds / 3600.0
+                    } else if (newDuration > 0) {
+                        newDuration / 3600.0
+                    } else {
+                        0.0
+                    }
+                    val newAvgSpeed = if (effectiveHours > 0 && current.distanceMeters > 0) {
+                        ((current.distanceMeters / 1000.0) / effectiveHours).toFloat()
+                    } else {
+                        current.avgSpeedKmh
+                    }
                     current.copy(
                         durationSeconds = newDuration,
+                        avgSpeedKmh = newAvgSpeed,
                         lastUpdatedTimestamp = System.currentTimeMillis()
                     )
                 }
@@ -301,7 +318,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
     private fun processNewLocation(location: Location) {
         val nowElapsedMillis = SystemClock.elapsedRealtime()
-        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < LOCATION_UPDATE_INTERVAL_MILLIS) return
+        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < 350L) return
         lastLocationProcessedElapsedMillis = nowElapsedMillis
 
         val accuracy = location.accuracy
@@ -311,27 +328,51 @@ class GpsTrackingManager private constructor(private val context: Context) {
             accuracy <= 30f -> GpsSignalQuality.WEAK
             else -> GpsSignalQuality.SEARCHING
         }
-        val reportedSpeedKmh = if (location.hasSpeed()) {
+
+        // 1. Raw speed evaluation (Doppler from GPS receiver if available, fallback to coordinate displacement)
+        val rawSpeedKmh: Float = if (location.hasSpeed()) {
             (location.speed * 3.6f).coerceIn(0.0f, MAX_REASONABLE_SPEED_KMH)
         } else {
-            0.0f
+            val prevRaw = lastRawLocation
+            if (prevRaw != null) {
+                val dtSec = (location.time - prevRaw.time) / 1000.0
+                val distM = location.distanceTo(prevRaw).toDouble()
+                if (dtSec in 0.4..10.0 && (distM / dtSec) <= 45.0) {
+                    ((distM / dtSec) * 3.6).toFloat().coerceIn(0.0f, MAX_REASONABLE_SPEED_KMH)
+                } else {
+                    0.0f
+                }
+            } else {
+                0.0f
+            }
         }
-        val hasReliableReportedSpeed = location.hasSpeed() &&
-            (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-                !location.hasSpeedAccuracy() ||
-                reportedSpeedKmh - location.speedAccuracyMetersPerSecond * 3.6f >
-                    STATIONARY_SPEED_THRESHOLD_KMH)
+        lastRawLocation = location
 
         val point = LocationPoint(
             latitude = location.latitude,
             longitude = location.longitude,
-            speedKmh = reportedSpeedKmh,
+            speedKmh = rawSpeedKmh,
             altitude = if (location.hasAltitude()) location.altitude else 0.0,
             timestamp = location.time,
             accuracy = accuracy
         )
 
-        if (accuracy > MAX_WALKING_LOCATION_ACCURACY_METERS) {
+        // Always update map marker position & signal quality
+        if (_trackingState.value.status != TrackingStatus.TRACKING) {
+            _trackingState.update { current ->
+                current.copy(
+                    currentLocation = point,
+                    gpsAccuracyMeters = accuracy,
+                    signalQuality = signalQuality,
+                    altitudeMeters = point.altitude,
+                    lastUpdatedTimestamp = System.currentTimeMillis()
+                )
+            }
+            return
+        }
+
+        // If accuracy is poor (e.g. searching indoors), update position but don't accumulate distance from false jump
+        if (accuracy > MAX_VALID_ACCURACY_METERS) {
             _trackingState.update { current ->
                 current.copy(
                     currentLocation = point,
@@ -345,99 +386,83 @@ class GpsTrackingManager private constructor(private val context: Context) {
         }
 
         _trackingState.update { current ->
-            if (current.status != TrackingStatus.TRACKING) {
-                // Just update current position and signal
-                return@update current.copy(
-                    currentLocation = point,
-                    gpsAccuracyMeters = accuracy,
-                    signalQuality = signalQuality,
-                    altitudeMeters = point.altitude,
-                    lastUpdatedTimestamp = System.currentTimeMillis()
-                )
+            if (current.status != TrackingStatus.TRACKING) return@update current
+
+            // 2. Filter instantaneous speed
+            val effectiveSpeed = if (rawSpeedKmh < STATIONARY_SPEED_THRESHOLD_KMH) {
+                0.0f
+            } else {
+                if (current.currentSpeedKmh <= 0.001f) {
+                    rawSpeedKmh
+                } else {
+                    current.currentSpeedKmh * (1.0f - SPEED_SMOOTHING_FACTOR) +
+                        rawSpeedKmh * SPEED_SMOOTHING_FACTOR
+                }
             }
 
-            val lastDistanceLoc = lastDistanceLocation
+            // 3. Distance calculation
             var distanceDelta = 0.0
             var elevationDelta = 0.0
-            var calculatedSpeedKmh = 0.0f
-            var movingDurationDeltaMillis = 0L
+            val lastLoc = lastTrackingLocation
 
-            if (lastDistanceLoc != null) {
-                val distanceFromLastAcceptedPoint = location.distanceTo(lastDistanceLoc).toDouble()
-                val elapsedSinceLastAcceptedMillis = location.time - lastDistanceLoc.time
-                val minimumReliableDistance = max(
-                    MIN_WALKING_DISTANCE_METERS,
-                    max(location.accuracy, lastDistanceLoc.accuracy) * ACCURACY_DISTANCE_FACTOR
-                )
-                val maximumPlausibleDistance = elapsedSinceLastAcceptedMillis * 55.56 / 1000.0
+            if (effectiveSpeed <= 0.0f) {
+                // Stationary: align tracking location to avoid phantom jumps when moving resumes
+                lastTrackingLocation = location
+            } else {
+                if (lastLoc == null) {
+                    lastTrackingLocation = location
+                } else {
+                    val stepDist = location.distanceTo(lastLoc).toDouble()
+                    val dtSec = (location.time - lastLoc.time) / 1000.0
+                    val maxPlausibleDist = if (dtSec > 0) (dtSec * (MAX_REASONABLE_SPEED_KMH / 3.6)) + 5.0 else 50.0
 
-                if (
-                    elapsedSinceLastAcceptedMillis > 0 &&
-                    distanceFromLastAcceptedPoint >= minimumReliableDistance &&
-                    distanceFromLastAcceptedPoint <= maximumPlausibleDistance
-                ) {
-                    distanceDelta = distanceFromLastAcceptedPoint
-                    calculatedSpeedKmh = (
-                        distanceFromLastAcceptedPoint / elapsedSinceLastAcceptedMillis * 3600.0
-                    ).toFloat()
-                    movingDurationDeltaMillis = elapsedSinceLastAcceptedMillis
-                    if (location.hasAltitude() && lastDistanceLoc.hasAltitude()) {
-                        val diffAlt = location.altitude - lastDistanceLoc.altitude
-                        if (diffAlt > 0.5) {
-                            elevationDelta = diffAlt
+                    if (stepDist <= maxPlausibleDist) {
+                        if (stepDist >= MIN_DISTANCE_ACCUMULATION_METERS) {
+                            distanceDelta = stepDist
+                            lastTrackingLocation = location
+
+                            if (location.hasAltitude() && lastLoc.hasAltitude()) {
+                                val diffAlt = location.altitude - lastLoc.altitude
+                                if (diffAlt in 0.5..50.0) {
+                                    elevationDelta = diffAlt
+                                }
+                            }
                         }
+                        // If stepDist < MIN_DISTANCE_ACCUMULATION_METERS, keep lastTrackingLocation unchanged
+                        // so cumulative displacement adds up across ticks and no distance is lost
+                    } else {
+                        // Unrealistic leap (teleport) - reset anchor
+                        lastTrackingLocation = location
                     }
                 }
             }
-            val measuredSpeedKmh = if (
-                hasReliableReportedSpeed &&
-                calculatedSpeedKmh > STATIONARY_SPEED_THRESHOLD_KMH
-            ) {
-                reportedSpeedKmh
-            } else {
-                calculatedSpeedKmh
-            }
-            val effectiveSpeed = when {
-                measuredSpeedKmh <= STATIONARY_SPEED_THRESHOLD_KMH -> 0.0f
-                current.currentSpeedKmh <= 0.001f &&
-                    measuredSpeedKmh < MOVEMENT_SPEED_THRESHOLD_KMH -> 0.0f
-                current.currentSpeedKmh <= 0.001f -> measuredSpeedKmh
-                else -> current.currentSpeedKmh * (1.0f - SPEED_SMOOTHING_FACTOR) +
-                    measuredSpeedKmh * SPEED_SMOOTHING_FACTOR
-            }
-            val newDistance = if (effectiveSpeed > 0.0f) {
-                current.distanceMeters + distanceDelta
-            } else {
-                current.distanceMeters
-            }
-            if (effectiveSpeed > 0.0f && distanceDelta > 0.0) {
-                movingDurationMillis += movingDurationDeltaMillis
-            }
-            if (effectiveSpeed > 0.0f && distanceDelta > 0.0) {
-                lastDistanceLocation = location
-            } else if (location.hasSpeed() &&
-                reportedSpeedKmh <= STATIONARY_SPEED_THRESHOLD_KMH
-            ) {
-                lastDistanceLocation = location
-            } else if (lastDistanceLocation == null) {
-                lastDistanceLocation = location
-            }
+
+            val newDistance = current.distanceMeters + distanceDelta
             val newMaxSpeed = max(current.maxSpeedKmh, effectiveSpeed)
-
-            val newAvgSpeed = if (movingDurationMillis > 0 && newDistance > 0) {
-                val hours = movingDurationMillis / 3600000.0
-                val km = newDistance / 1000.0
-                (km / hours).toFloat()
-            } else {
-                0.0f
-            }
-
             val newElevation = current.elevationGainMeters + elevationDelta
-            val updatedPoints = current.routePoints + point
+
+            // 4. Route points: append if first point or if moved at least 3m from last point
+            val updatedPoints = if (current.routePoints.isEmpty()) {
+                listOf(point)
+            } else if (effectiveSpeed > 0.0f) {
+                val lastPoint = current.routePoints.last()
+                val distFromLastPoint = FloatArray(1)
+                Location.distanceBetween(
+                    lastPoint.latitude, lastPoint.longitude,
+                    point.latitude, point.longitude,
+                    distFromLastPoint
+                )
+                if (distFromLastPoint[0] >= MIN_ROUTE_POINT_DISTANCE_METERS) {
+                    current.routePoints + point
+                } else {
+                    current.routePoints
+                }
+            } else {
+                current.routePoints
+            }
 
             current.copy(
                 currentSpeedKmh = effectiveSpeed,
-                avgSpeedKmh = newAvgSpeed,
                 maxSpeedKmh = newMaxSpeed,
                 distanceMeters = newDistance,
                 currentLocation = point,
