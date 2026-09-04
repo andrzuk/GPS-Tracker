@@ -81,6 +81,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
         private const val SPEED_SMOOTHING_FACTOR = 0.35f
         private const val STATIONARY_SPEED_THRESHOLD_KMH = 2.0f
         private const val MOVEMENT_SPEED_THRESHOLD_KMH = 3.0f
+        private const val LOCATION_UPDATE_INTERVAL_MILLIS = 500L
 
         @Volatile
         private var instance: GpsTrackingManager? = null
@@ -100,9 +101,9 @@ class GpsTrackingManager private constructor(private val context: Context) {
         try {
             val locationRequest = LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
-                1000L
+                LOCATION_UPDATE_INTERVAL_MILLIS
             ).apply {
-                setMinUpdateIntervalMillis(500L)
+                setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL_MILLIS)
                 setMinUpdateDistanceMeters(0.5f)
                 setWaitForAccurateLocation(false)
             }.build()
@@ -139,7 +140,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 lm.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    1000L,
+                    LOCATION_UPDATE_INTERVAL_MILLIS,
                     0.5f,
                     systemLocationListener,
                     Looper.getMainLooper()
@@ -148,7 +149,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 lm.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
-                    1000L,
+                    LOCATION_UPDATE_INTERVAL_MILLIS,
                     0.5f,
                     systemLocationListener,
                     Looper.getMainLooper()
@@ -307,7 +308,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
     private fun processNewLocation(location: Location) {
         val nowElapsedMillis = SystemClock.elapsedRealtime()
-        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < 1000L) return
+        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < LOCATION_UPDATE_INTERVAL_MILLIS) return
         lastLocationProcessedElapsedMillis = nowElapsedMillis
 
         val accuracy = location.accuracy
