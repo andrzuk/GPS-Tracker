@@ -83,6 +83,9 @@ class GpsTrackingManager private constructor(private val context: Context) {
         private const val STATIONARY_SPEED_THRESHOLD_KMH = 0.5f
         private const val MOVEMENT_SPEED_THRESHOLD_KMH = 1.0f
         private const val LOCATION_UPDATE_INTERVAL_MILLIS = 500L
+        private const val MAX_WALKING_LOCATION_ACCURACY_METERS = 25.0f
+        private const val MIN_WALKING_DISTANCE_METERS = 1.5
+        private const val ACCURACY_DISTANCE_FACTOR = 0.3
 
         @Volatile
         private var instance: GpsTrackingManager? = null
@@ -307,6 +310,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
         lastLocationProcessedElapsedMillis = nowElapsedMillis
 
         val accuracy = location.accuracy
+        if (accuracy > MAX_WALKING_LOCATION_ACCURACY_METERS) return
+
         val signalQuality = when {
             accuracy <= 5f -> GpsSignalQuality.EXCELLENT
             accuracy <= 15f -> GpsSignalQuality.GOOD
@@ -345,54 +350,37 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 )
             }
 
-            val lastLoc = lastRawLocation
             val lastDistanceLoc = lastDistanceLocation
             var distanceDelta = 0.0
             var elevationDelta = 0.0
             var calculatedSpeedKmh = 0.0f
             var movingDurationDeltaMillis = 0L
 
-            if (lastLoc != null) {
-                val dist = location.distanceTo(lastLoc).toDouble()
-                val elapsedMillis = location.time - lastLoc.time
-                val maximumPlausibleDistance = elapsedMillis * 55.56 / 1000.0
-                val minimumSpeedCalculationDistance = max(
-                    3.0,
-                    max(location.accuracy, lastLoc.accuracy).toDouble()
-                )
-
-                if (
-                    elapsedMillis > 0 &&
-                    dist >= minimumSpeedCalculationDistance &&
-                    dist <= maximumPlausibleDistance
-                ) {
-                    distanceDelta = dist
-                    calculatedSpeedKmh = (dist / elapsedMillis * 3600.0).toFloat()
-                    if (location.hasAltitude() && lastLoc.hasAltitude()) {
-                        val diffAlt = location.altitude - lastLoc.altitude
-                        if (diffAlt > 0.5) {
-                            elevationDelta = diffAlt
-                        }
-                    }
-                }
-            }
             if (lastDistanceLoc != null) {
                 val distanceFromLastAcceptedPoint = location.distanceTo(lastDistanceLoc).toDouble()
                 val elapsedSinceLastAcceptedMillis = location.time - lastDistanceLoc.time
                 val minimumReliableDistance = max(
-                    3.0,
-                    max(location.accuracy, lastDistanceLoc.accuracy).toDouble()
+                    MIN_WALKING_DISTANCE_METERS,
+                    max(location.accuracy, lastDistanceLoc.accuracy) * ACCURACY_DISTANCE_FACTOR
                 )
+                val maximumPlausibleDistance = elapsedSinceLastAcceptedMillis * 55.56 / 1000.0
 
                 if (
                     elapsedSinceLastAcceptedMillis > 0 &&
-                    distanceFromLastAcceptedPoint >= minimumReliableDistance
+                    distanceFromLastAcceptedPoint >= minimumReliableDistance &&
+                    distanceFromLastAcceptedPoint <= maximumPlausibleDistance
                 ) {
                     distanceDelta = distanceFromLastAcceptedPoint
                     calculatedSpeedKmh = (
                         distanceFromLastAcceptedPoint / elapsedSinceLastAcceptedMillis * 3600.0
                     ).toFloat()
                     movingDurationDeltaMillis = elapsedSinceLastAcceptedMillis
+                    if (location.hasAltitude() && lastDistanceLoc.hasAltitude()) {
+                        val diffAlt = location.altitude - lastDistanceLoc.altitude
+                        if (diffAlt > 0.5) {
+                            elevationDelta = diffAlt
+                        }
+                    }
                 }
             }
             lastRawLocation = location
