@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -38,6 +39,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -131,6 +133,17 @@ fun MainScreen(
     val showSaveDialog by viewModel.showSaveDialog.collectAsState()
     val showResetDialog by viewModel.showResetDialog.collectAsState()
     val showHistorySheet by viewModel.showHistorySheet.collectAsState()
+
+    DisposableEffect(activity, trackingState.isTracking) {
+        if (trackingState.isTracking) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
 
     var hasLocationPerm by remember { mutableStateOf(checkHasLocationPermission(context)) }
     var hasFineLocationPerm by remember { mutableStateOf(checkHasFineLocationPermission(context)) }
