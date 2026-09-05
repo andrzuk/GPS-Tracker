@@ -389,10 +389,14 @@ class GpsTrackingManager private constructor(private val context: Context) {
             }
             if (lastDistanceLoc != null) {
                 val distanceFromLastAcceptedPoint = location.distanceTo(lastDistanceLoc).toDouble()
-                val minimumReliableDistance = max(
-                    3.0,
-                    max(location.accuracy, lastDistanceLoc.accuracy).toDouble()
-                )
+                val minimumReliableDistance = if (hasReliableReportedSpeed) {
+                    1.0
+                } else {
+                    max(
+                        3.0,
+                        max(location.accuracy, lastDistanceLoc.accuracy).toDouble()
+                    )
+                }
 
                 if (distanceFromLastAcceptedPoint >= minimumReliableDistance) {
                     distanceDelta = distanceFromLastAcceptedPoint
