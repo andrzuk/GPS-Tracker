@@ -104,7 +104,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 LOCATION_UPDATE_INTERVAL_MILLIS
             ).apply {
                 setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL_MILLIS)
-                setMinUpdateDistanceMeters(0.5f)
+                setMinUpdateDistanceMeters(0.0f)
                 setWaitForAccurateLocation(false)
             }.build()
 
@@ -141,7 +141,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 lm.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
                     LOCATION_UPDATE_INTERVAL_MILLIS,
-                    0.5f,
+                    0.0f,
                     systemLocationListener,
                     Looper.getMainLooper()
                 )
@@ -150,7 +150,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 lm.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
                     LOCATION_UPDATE_INTERVAL_MILLIS,
-                    0.5f,
+                    0.0f,
                     systemLocationListener,
                     Looper.getMainLooper()
                 )
@@ -296,9 +296,16 @@ class GpsTrackingManager private constructor(private val context: Context) {
                     } else {
                         current.avgSpeedKmh
                     }
+                    val timeSinceLastFix = SystemClock.elapsedRealtime() - lastLocationProcessedElapsedMillis
+                    val speedWatchdog = if (lastLocationProcessedElapsedMillis > 0L && timeSinceLastFix > 1500L) {
+                        0.0f
+                    } else {
+                        current.currentSpeedKmh
+                    }
                     current.copy(
                         durationSeconds = newDuration,
                         avgSpeedKmh = newAvgSpeed,
+                        currentSpeedKmh = speedWatchdog,
                         lastUpdatedTimestamp = System.currentTimeMillis()
                     )
                 }
@@ -405,8 +412,12 @@ class GpsTrackingManager private constructor(private val context: Context) {
                 current.currentSpeedKmh <= 0.001f &&
                     measuredSpeedKmh < MOVEMENT_SPEED_THRESHOLD_KMH -> 0.0f
                 current.currentSpeedKmh <= 0.001f -> measuredSpeedKmh
-                else -> current.currentSpeedKmh * (1.0f - SPEED_SMOOTHING_FACTOR) +
-                    measuredSpeedKmh * SPEED_SMOOTHING_FACTOR
+                measuredSpeedKmh <= MOVEMENT_SPEED_THRESHOLD_KMH -> 0.0f
+                else -> {
+                    val smoothed = current.currentSpeedKmh * (1.0f - SPEED_SMOOTHING_FACTOR) +
+                        measuredSpeedKmh * SPEED_SMOOTHING_FACTOR
+                    if (smoothed <= MOVEMENT_SPEED_THRESHOLD_KMH) 0.0f else smoothed
+                }
             }
             val newDistance = if (effectiveSpeed > 0.0f) {
                 current.distanceMeters + distanceDelta
