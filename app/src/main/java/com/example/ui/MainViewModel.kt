@@ -10,6 +10,7 @@ import com.example.location.GpsTrackingManager
 import com.example.service.TrackingService
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -144,28 +146,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val startTime = points.firstOrNull()?.timestamp ?: (System.currentTimeMillis() - state.durationSeconds * 1000)
             val endTime = System.currentTimeMillis()
 
-            // Serialize points as lat/lng/speed arrays to keep DB compact
-            val pointsData = points.map { arrayOf(it.latitude, it.longitude, it.speedKmh.toDouble(), it.altitude) }
-            val pointsJson = try {
-                adapter.toJson(pointsData)
-            } catch (e: Exception) {
-                "[]"
+            withContext(Dispatchers.IO) {
+                // Serialize points as lat/lng/speed arrays to keep DB compact
+                val pointsData = points.map { arrayOf(it.latitude, it.longitude, it.speedKmh.toDouble(), it.altitude) }
+                val pointsJson = try {
+                    adapter.toJson(pointsData)
+                } catch (e: Exception) {
+                    "[]"
+                }
+
+                val entity = TrackEntity(
+                    title = title,
+                    startTime = startTime,
+                    endTime = endTime,
+                    totalDistanceMeters = state.distanceMeters,
+                    durationSeconds = state.durationSeconds,
+                    avgSpeedKmh = state.avgSpeedKmh,
+                    maxSpeedKmh = state.maxSpeedKmh,
+                    elevationGainMeters = state.elevationGainMeters,
+                    pointsCount = points.size,
+                    pointsJson = pointsJson
+                )
+
+                trackDao.insertTrack(entity)
             }
-
-            val entity = TrackEntity(
-                title = title,
-                startTime = startTime,
-                endTime = endTime,
-                totalDistanceMeters = state.distanceMeters,
-                durationSeconds = state.durationSeconds,
-                avgSpeedKmh = state.avgSpeedKmh,
-                maxSpeedKmh = state.maxSpeedKmh,
-                elevationGainMeters = state.elevationGainMeters,
-                pointsCount = points.size,
-                pointsJson = pointsJson
-            )
-
-            trackDao.insertTrack(entity)
             _showSaveDialog.value = false
             confirmReset()
         }
@@ -173,7 +177,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteTrack(track: TrackEntity) {
         viewModelScope.launch {
-            trackDao.deleteTrack(track)
+            withContext(Dispatchers.IO) {
+                trackDao.deleteTrack(track)
+            }
         }
     }
 }
