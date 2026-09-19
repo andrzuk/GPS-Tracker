@@ -1,7 +1,6 @@
 package com.example.location
 
 import android.annotation.SuppressLint
-import android.app.Application
 import android.content.Context
 import android.location.Location
 import android.location.LocationListener
@@ -358,55 +357,61 @@ class GpsTrackingManager private constructor(private val context: Context) {
             }
 
             val lastLoc = lastRawLocation
-            val lastDistanceLoc = lastDistanceLocation
             var distanceDelta = 0.0
             var elevationDelta = 0.0
             var calculatedSpeedKmh = 0.0f
+            var hasAcceptedMovementSegment = false
+            var distanceFromAnchor = 0.0
+            var maximumPlausibleDistanceFromAnchor = 0.0
 
             if (lastLoc != null) {
                 val dist = location.distanceTo(lastLoc).toDouble()
                 val elapsedMillis = location.time - lastLoc.time
                 val maximumPlausibleDistance = elapsedMillis * 55.56 / 1000.0
-                val minimumSpeedCalculationDistance = max(
-                    3.0,
-                    max(location.accuracy, lastLoc.accuracy).toDouble()
-                )
 
                 if (
                     elapsedMillis > 0 &&
-                    dist >= minimumSpeedCalculationDistance &&
+                    dist >= 0.5 &&
                     dist <= maximumPlausibleDistance
                 ) {
-                    distanceDelta = dist
                     calculatedSpeedKmh = (dist / elapsedMillis * 3600.0).toFloat()
-                    if (location.hasAltitude() && lastLoc.hasAltitude()) {
-                        val diffAlt = location.altitude - lastLoc.altitude
-                        if (diffAlt > 0.5) {
-                            elevationDelta = diffAlt
+                }
+            }
+
+            val distanceAnchor = lastDistanceLocation ?: lastLoc
+            if (distanceAnchor != null) {
+                val elapsedFromAnchorMillis = location.time - distanceAnchor.time
+                if (elapsedFromAnchorMillis > 0) {
+                    distanceFromAnchor = location.distanceTo(distanceAnchor).toDouble()
+                    maximumPlausibleDistanceFromAnchor = elapsedFromAnchorMillis * 55.56 / 1000.0
+                    val accuracyBasedDistance =
+                        max(location.accuracy, distanceAnchor.accuracy).toDouble() * 0.35
+                    val minimumReliableDistance = max(2.0, minOf(accuracyBasedDistance, 8.0))
+                    val hasMovementEvidence =
+                        hasReliableReportedSpeed || calculatedSpeedKmh > MOVEMENT_SPEED_THRESHOLD_KMH
+
+                    if (
+                        hasMovementEvidence &&
+                        distanceFromAnchor >= minimumReliableDistance &&
+                        distanceFromAnchor <= maximumPlausibleDistanceFromAnchor
+                    ) {
+                        hasAcceptedMovementSegment = true
+                        distanceDelta = distanceFromAnchor
+                        if (location.hasAltitude() && distanceAnchor.hasAltitude()) {
+                            val diffAlt = location.altitude - distanceAnchor.altitude
+                            if (diffAlt > 0.5) {
+                                elevationDelta = diffAlt
+                            }
                         }
                     }
                 }
             }
-            if (lastDistanceLoc != null) {
-                val distanceFromLastAcceptedPoint = location.distanceTo(lastDistanceLoc).toDouble()
-                val minimumReliableDistance = if (hasReliableReportedSpeed) {
-                    1.0
-                } else {
-                    max(
-                        3.0,
-                        max(location.accuracy, lastDistanceLoc.accuracy).toDouble()
-                    )
-                }
 
-                if (distanceFromLastAcceptedPoint >= minimumReliableDistance) {
-                    distanceDelta = distanceFromLastAcceptedPoint
-                }
-            }
             lastRawLocation = location
 
             val measuredSpeedKmh = if (hasReliableReportedSpeed) {
                 reportedSpeedKmh
-            } else if (!location.hasSpeed()) {
+            } else if (calculatedSpeedKmh > 0.0f) {
                 calculatedSpeedKmh
             } else {
                 0.0f
@@ -423,17 +428,26 @@ class GpsTrackingManager private constructor(private val context: Context) {
                     if (smoothed <= MOVEMENT_SPEED_THRESHOLD_KMH) 0.0f else smoothed
                 }
             }
-            val newDistance = if (effectiveSpeed > 0.0f) {
+            val newDistance = if (hasAcceptedMovementSegment) {
                 current.distanceMeters + distanceDelta
             } else {
                 current.distanceMeters
             }
-            if (effectiveSpeed > 0.0f && distanceDelta > 0.0) {
+
+            if (hasAcceptedMovementSegment) {
                 lastDistanceLocation = location
             } else if (lastDistanceLocation == null) {
                 lastDistanceLocation = location
+            } else if (
+                maximumPlausibleDistanceFromAnchor > 0.0 &&
+                distanceFromAnchor > maximumPlausibleDistanceFromAnchor * 1.5
+            ) {
+                // Re-anchor on implausible jumps to avoid long-term stale-anchor accumulation.
+                lastDistanceLocation = location
             }
-            val newMaxSpeed = max(current.maxSpeedKmh, effectiveSpeed)
+
+            val peakSpeed = max(effectiveSpeed, measuredSpeedKmh)
+            val newMaxSpeed = max(current.maxSpeedKmh, peakSpeed)
 
             val newAvgSpeed = if (current.durationSeconds > 0 && newDistance > 0) {
                 val hours = current.durationSeconds / 3600.0
