@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -45,11 +46,6 @@ import com.example.ui.theme.BentoDarkSurface
 import com.example.ui.theme.BentoHeroLilac
 import com.example.ui.theme.BentoHeroOnLilac
 import com.example.ui.theme.EmeraldAccent
-import com.example.ui.theme.RoseDestructive
-import com.example.ui.theme.SpeedFast
-import com.example.ui.theme.SpeedLow
-import com.example.ui.theme.SpeedMed
-import com.example.ui.theme.SpeedSprint
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -70,13 +66,6 @@ fun SpeedGauge(
         animationSpec = tween(durationMillis = 350),
         label = "SpeedGaugeAnimation"
     )
-
-    val speedColor = when {
-        currentSpeedKmh < 15f -> SpeedLow
-        currentSpeedKmh < 30f -> SpeedMed
-        currentSpeedKmh < 50f -> SpeedFast
-        else -> SpeedSprint
-    }
 
     Surface(
         modifier = modifier
@@ -158,87 +147,95 @@ fun SpeedGauge(
                     .testTag("speed_gauge_canvas_box"),
                 contentAlignment = Alignment.BottomCenter
             ) {
-                val outlineColor = BentoHeroOnLilac.copy(alpha = 0.18f)
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawWithCache {
+                            val strokeWidth = 14.dp.toPx()
+                            val arcSize = Size(size.width - strokeWidth, (size.height * 2) - strokeWidth)
+                            val arcTopLeft = Offset(strokeWidth / 2, strokeWidth / 2)
 
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val strokeWidth = 14.dp.toPx()
-                    val arcSize = Size(size.width - strokeWidth, (size.height * 2) - strokeWidth)
-                    val arcTopLeft = Offset(strokeWidth / 2, strokeWidth / 2)
+                            val startAngle = 180f
+                            val sweepAngle = 180f
+                            val outlineColor = BentoHeroOnLilac.copy(alpha = 0.18f)
 
-                    val startAngle = 180f
-                    val sweepAngle = 180f
+                            val numTicks = 9
+                            val radius = (size.width - strokeWidth) / 2
+                            val center = Offset(size.width / 2, size.height)
 
-                    // Background Track Arc
-                    drawArc(
-                        color = outlineColor,
-                        startAngle = startAngle,
-                        sweepAngle = sweepAngle,
-                        useCenter = false,
-                        topLeft = arcTopLeft,
-                        size = arcSize,
-                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                    )
-
-                    // Tick Marks
-                    val numTicks = 9
-                    val radius = (size.width - strokeWidth) / 2
-                    val center = Offset(size.width / 2, size.height)
-
-                    for (i in 0 until numTicks) {
-                        val tickFraction = i.toFloat() / (numTicks - 1)
-                        val tickAngleRad = (180f + tickFraction * 180f) * (PI / 180f)
-                        val innerR = radius - 16.dp.toPx()
-                        val outerR = radius - 8.dp.toPx()
-
-                        val startX = center.x + (innerR * cos(tickAngleRad)).toFloat()
-                        val startY = center.y + (innerR * sin(tickAngleRad)).toFloat()
-                        val endX = center.x + (outerR * cos(tickAngleRad)).toFloat()
-                        val endY = center.y + (outerR * sin(tickAngleRad)).toFloat()
-
-                        drawLine(
-                            color = outlineColor,
-                            start = Offset(startX, startY),
-                            end = Offset(endX, endY),
-                            strokeWidth = 2.dp.toPx()
-                        )
-                    }
-
-                    // Active Colored Speed Arc
-                    if (animatedSpeedFraction > 0.005f) {
-                        val activeSweep = sweepAngle * animatedSpeedFraction
-                        drawArc(
-                            brush = Brush.sweepGradient(
+                            // Cache gradient brush per drawing area, not per animation frame.
+                            val activeArcBrush = Brush.sweepGradient(
                                 0.5f to BentoHeroOnLilac,
                                 0.75f to BentoHeroOnLilac,
                                 1.0f to BentoHeroOnLilac,
                                 center = center
-                            ),
-                            startAngle = startAngle,
-                            sweepAngle = activeSweep,
-                            useCenter = false,
-                            topLeft = arcTopLeft,
-                            size = arcSize,
-                            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                        )
+                            )
 
-                        // Glowing head dot on needle end
-                        val currentAngleRad = (180f + activeSweep) * (PI / 180f)
-                        val dotRadius = radius
-                        val dotX = center.x + (dotRadius * cos(currentAngleRad)).toFloat()
-                        val dotY = center.y + (dotRadius * sin(currentAngleRad)).toFloat()
+                            onDrawBehind {
+                                // Background Track Arc
+                                drawArc(
+                                    color = outlineColor,
+                                    startAngle = startAngle,
+                                    sweepAngle = sweepAngle,
+                                    useCenter = false,
+                                    topLeft = arcTopLeft,
+                                    size = arcSize,
+                                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                                )
 
-                        drawCircle(
-                            color = BentoHeroOnLilac,
-                            radius = strokeWidth * 0.65f,
-                            center = Offset(dotX, dotY)
-                        )
-                        drawCircle(
-                            color = Color.White,
-                            radius = strokeWidth * 0.3f,
-                            center = Offset(dotX, dotY)
-                        )
-                    }
-                }
+                                // Tick Marks
+                                for (i in 0 until numTicks) {
+                                    val tickFraction = i.toFloat() / (numTicks - 1)
+                                    val tickAngleRad = (180f + tickFraction * 180f) * (PI / 180f)
+                                    val innerR = radius - 16.dp.toPx()
+                                    val outerR = radius - 8.dp.toPx()
+
+                                    val startX = center.x + (innerR * cos(tickAngleRad)).toFloat()
+                                    val startY = center.y + (innerR * sin(tickAngleRad)).toFloat()
+                                    val endX = center.x + (outerR * cos(tickAngleRad)).toFloat()
+                                    val endY = center.y + (outerR * sin(tickAngleRad)).toFloat()
+
+                                    drawLine(
+                                        color = outlineColor,
+                                        start = Offset(startX, startY),
+                                        end = Offset(endX, endY),
+                                        strokeWidth = 2.dp.toPx()
+                                    )
+                                }
+
+                                // Active Colored Speed Arc
+                                if (animatedSpeedFraction > 0.005f) {
+                                    val activeSweep = sweepAngle * animatedSpeedFraction
+                                    drawArc(
+                                        brush = activeArcBrush,
+                                        startAngle = startAngle,
+                                        sweepAngle = activeSweep,
+                                        useCenter = false,
+                                        topLeft = arcTopLeft,
+                                        size = arcSize,
+                                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                                    )
+
+                                    // Glowing head dot on needle end
+                                    val currentAngleRad = (180f + activeSweep) * (PI / 180f)
+                                    val dotRadius = radius
+                                    val dotX = center.x + (dotRadius * cos(currentAngleRad)).toFloat()
+                                    val dotY = center.y + (dotRadius * sin(currentAngleRad)).toFloat()
+
+                                    drawCircle(
+                                        color = BentoHeroOnLilac,
+                                        radius = strokeWidth * 0.65f,
+                                        center = Offset(dotX, dotY)
+                                    )
+                                    drawCircle(
+                                        color = Color.White,
+                                        radius = strokeWidth * 0.3f,
+                                        center = Offset(dotX, dotY)
+                                    )
+                                }
+                            }
+                        }
+                ) {}
 
                 // Digital Large Number in Center of Gauge
                 Column(
