@@ -1,5 +1,8 @@
 package com.example.data.models
 
+import kotlinx.collections.immutable.PersistentList
+import kotlinx.collections.immutable.persistentListOf
+
 enum class TrackingStatus {
     STOPPED,
     TRACKING,
@@ -22,7 +25,7 @@ data class TrackingState(
     val distanceMeters: Double = 0.0,
     val durationSeconds: Long = 0L,
     val currentLocation: LocationPoint? = null,
-    val routePoints: List<LocationPoint> = emptyList(),
+    val routePoints: PersistentList<LocationPoint> = persistentListOf(),
     val gpsAccuracyMeters: Float = 0.0f,
     val signalQuality: GpsSignalQuality = GpsSignalQuality.SEARCHING,
     val altitudeMeters: Double = 0.0,

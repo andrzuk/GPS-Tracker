@@ -20,6 +20,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -204,7 +205,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             distanceMeters = 0.0,
             durationSeconds = 0L,
             currentLocation = currentLoc,
-            routePoints = if (currentLoc != null) listOf(currentLoc) else emptyList(),
+            routePoints = if (currentLoc != null) persistentListOf(currentLoc) else persistentListOf(),
             gpsAccuracyMeters = _trackingState.value.gpsAccuracyMeters,
             signalQuality = _trackingState.value.signalQuality,
             altitudeMeters = currentLoc?.altitude ?: 0.0,
@@ -271,7 +272,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             distanceMeters = 0.0,
             durationSeconds = 0L,
             currentLocation = currentLoc,
-            routePoints = if (currentLoc != null) listOf(currentLoc) else emptyList(),
+            routePoints = if (currentLoc != null) persistentListOf(currentLoc) else persistentListOf(),
             gpsAccuracyMeters = _trackingState.value.gpsAccuracyMeters,
             signalQuality = _trackingState.value.signalQuality,
             altitudeMeters = currentLoc?.altitude ?: 0.0,
@@ -458,7 +459,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             }
 
             val newElevation = current.elevationGainMeters + elevationDelta
-            val updatedPoints = current.routePoints + point
+            val updatedPoints = current.routePoints.add(point)
 
             current.copy(
                 currentSpeedKmh = effectiveSpeed,
