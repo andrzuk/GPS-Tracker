@@ -63,29 +63,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startTracking() {
         try {
             TrackingService.startService(getApplication())
-        } catch (_: Exception) {}
-        gpsManager.startTracking()
+        } catch (_: Exception) {
+            gpsManager.startTracking()
+        }
     }
 
     fun pauseTracking() {
         try {
             TrackingService.pauseService(getApplication())
-        } catch (_: Exception) {}
-        gpsManager.pauseTracking()
+        } catch (_: Exception) {
+            gpsManager.pauseTracking()
+        }
     }
 
     fun resumeTracking() {
         try {
             TrackingService.resumeService(getApplication())
-        } catch (_: Exception) {}
-        gpsManager.resumeTracking()
+        } catch (_: Exception) {
+            gpsManager.resumeTracking()
+        }
     }
 
     fun stopTracking() {
         try {
             TrackingService.stopService(getApplication())
-        } catch (_: Exception) {}
-        gpsManager.stopTracking()
+        } catch (_: Exception) {
+            gpsManager.stopTracking()
+        }
     }
 
     fun requestReset() {
