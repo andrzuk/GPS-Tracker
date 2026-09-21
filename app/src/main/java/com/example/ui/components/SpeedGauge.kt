@@ -152,16 +152,16 @@ fun SpeedGauge(
                         .fillMaxSize()
                         .drawWithCache {
                             val strokeWidth = 14.dp.toPx()
-                            val arcSize = Size(size.width - strokeWidth, (size.height * 2) - strokeWidth)
-                            val arcTopLeft = Offset(strokeWidth / 2, strokeWidth / 2)
+                            val radius = (size.width - strokeWidth) / 2
+                            val center = Offset(size.width / 2, size.height - strokeWidth / 2)
+                            val arcSize = Size(radius * 2, radius * 2)
+                            val arcTopLeft = Offset(center.x - radius, center.y - radius)
 
                             val startAngle = 180f
                             val sweepAngle = 180f
                             val outlineColor = BentoHeroOnLilac.copy(alpha = 0.18f)
 
                             val numTicks = 9
-                            val radius = (size.width - strokeWidth) / 2
-                            val center = Offset(size.width / 2, size.height)
 
                             // Cache gradient brush per drawing area, not per animation frame.
                             val activeArcBrush = Brush.sweepGradient(
