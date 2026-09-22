@@ -96,27 +96,20 @@ private tailrec fun Context.findActivity(): Activity? {
 }
 
 private fun openAppDetailsSettings(context: Context) {
-    val pm = context.packageManager
-
-    // MIUI/HyperOS has its own permission manager that works even when App Info > Permissions crashes
-    val miuiIntent = Intent("miui.intent.action.APP_PERM_EDITOR").apply {
-        setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
-        putExtra("extra_pkgname", context.packageName)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-
-    val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-        data = Uri.fromParts("package", context.packageName, null)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-
     try {
-        if (miuiIntent.resolveActivity(pm) != null) {
-            context.startActivity(miuiIntent)
-            return
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", context.packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-    } catch (_: Exception) {}
-    context.startActivity(fallbackIntent)
+        context.startActivity(intent)
+    } catch (_: Exception) {
+        try {
+            val genericSettings = Intent(Settings.ACTION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(genericSettings)
+        } catch (_: Exception) {}
+    }
 }
 
 @Composable
@@ -183,7 +176,10 @@ fun MainScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         hasLocationPerm = checkHasLocationPermission(context)
         hasFineLocationPerm = checkHasFineLocationPermission(context)
-        if (hasFineLocationPerm) viewModel.startPassiveGpsUpdates()
+        if (hasFineLocationPerm) {
+            showPermissionRationaleDialog = false
+            viewModel.startPassiveGpsUpdates()
+        }
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {

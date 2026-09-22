@@ -183,13 +183,13 @@ fun LocationPermissionRationaleDialog(
             )
         },
         title = {
-            Text("Brak uprawnień lokalizacji", fontWeight = FontWeight.Bold)
+            Text("Wymagane uprawnienie lokalizacji", fontWeight = FontWeight.Bold)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Aplikacja nie może wyświetlić systemowego okna uprawnień.")
-                Text("Nadaj uprawnienie ręcznie:")
-                Text("Ustawienia → Aplikacje → GPS Tracker → Uprawnienia → Lokalizacja → Zezwól podczas używania aplikacji")
+                Text("Do rejestrowania trasy i prędkości aplikacja potrzebuje dostępu do lokalizacji GPS.")
+                Text("Kliknij „Otwórz ustawienia”, a następnie wybierz:")
+                Text("Uprawnienia aplikacji → Lokalizacja → Zezwalaj tylko podczas używania aplikacji (oraz włącz Dokładną lokalizację).")
             }
         },
         confirmButton = {
