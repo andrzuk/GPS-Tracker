@@ -247,6 +247,10 @@ fun MainScreen(
 
             if (showPermissionRationaleDialog) {
                 LocationPermissionRationaleDialog(
+                    onRequestAgain = {
+                        showPermissionRationaleDialog = false
+                        requestPermissions()
+                    },
                     onOpenSettings = {
                         showPermissionRationaleDialog = false
                         openAppDetailsSettings(context)

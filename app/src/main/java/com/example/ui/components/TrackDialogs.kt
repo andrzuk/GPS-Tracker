@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,6 +16,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -169,6 +171,7 @@ fun ResetConfirmDialog(
 
 @Composable
 fun LocationPermissionRationaleDialog(
+    onRequestAgain: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -186,20 +189,29 @@ fun LocationPermissionRationaleDialog(
             Text("Wymagane uprawnienie lokalizacji", fontWeight = FontWeight.Bold)
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Do rejestrowania trasy i prędkości aplikacja potrzebuje dostępu do lokalizacji GPS.")
-                Text("Kliknij „Otwórz ustawienia”, a następnie wybierz:")
-                Text("Uprawnienia aplikacji → Lokalizacja → Zezwalaj tylko podczas używania aplikacji (oraz włącz Dokładną lokalizację).")
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Aplikacja potrzebuje dostępu do GPS, aby mierzyć prędkość i zapisywać trasę.")
+                Text(
+                    "Wskazówka dla Xiaomi/Redmi:\n" +
+                    "Jeśli otwierasz ustawienia, wybierz: Ustawienia → Aplikacje → Zarządzaj aplikacjami (nie „Uprawnienia”) → GPS Tracker → Uprawnienia aplikacji → Lokalizacja.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = {
-            Button(onClick = onOpenSettings) {
-                Text("Otwórz ustawienia")
+            Button(onClick = onRequestAgain) {
+                Text("Zapytaj ponownie")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Anuluj")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onOpenSettings) {
+                    Text("Ustawienia")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Anuluj")
+                }
             }
         }
     )
