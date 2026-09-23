@@ -22,8 +22,8 @@ The app runs tracking in a foreground service, shows live status in a notificati
 - GPS signal quality and accuracy display
 - Save track sessions to local Room database
 - Track history bottom sheet with delete support
-- Runtime permission handling for location and notifications
-- Light/dark/system theme toggle
+- Runtime location permission handling (with MIUI/HyperOS fallback dialog)
+- Light/dark theme toggle (system theme used by default until toggled)
 - Unit, Robolectric, and Compose screenshot tests
 
 ## Tech Stack
@@ -122,14 +122,28 @@ Windows:
 - Select a device or emulator
 - Run the app module
 
+### 6. Add location permissions manually (via USB)
+
+```powershell
+adb devices
+adb shell pm list packages | Select-String "gpstracker"
+adb shell pm grant com.aistudio.gpstracker.rtmmap android.permission.ACCESS_FINE_LOCATION
+adb shell pm grant com.aistudio.gpstracker.rtmmap android.permission.ACCESS_COARSE_LOCATION
+adb shell dumpsys package com.aistudio.gpstracker.rtmmap | Select-String "LOCATION"
+```
+
 ## Runtime Permissions
 
-The app requests:
+The app declares these permissions in the manifest:
 - ACCESS_FINE_LOCATION
 - ACCESS_COARSE_LOCATION
 - FOREGROUND_SERVICE
 - FOREGROUND_SERVICE_LOCATION
 - POST_NOTIFICATIONS (Android 13+)
+
+Notes:
+- Location permissions are requested at runtime in-app.
+- POST_NOTIFICATIONS is declared for Android 13+ foreground notification support.
 
 On MIUI/HyperOS devices where the system permission dialog is suppressed, the app shows an in-app rationale dialog with manual steps. The "Open Settings" button attempts to open the MIUI SecurityCenter permission editor directly (`miui.intent.action.APP_PERM_EDITOR`), falling back to standard App Info if the MIUI component is unavailable.
 

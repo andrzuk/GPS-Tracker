@@ -25,6 +25,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.sample
+import kotlin.time.Duration.Companion.seconds
 
 class TrackingService : Service() {
 
@@ -160,7 +162,9 @@ class TrackingService : Service() {
 
     private fun observeState() {
         serviceScope.launch {
-            gpsManager.trackingState.collectLatest {
+            gpsManager.trackingState
+                .sample(1.seconds) // Sample the tracking state every 1 second to reduce UI updates
+                .collectLatest {
                 if (it.status != TrackingStatus.STOPPED) {
                     updateNotification()
                 }
