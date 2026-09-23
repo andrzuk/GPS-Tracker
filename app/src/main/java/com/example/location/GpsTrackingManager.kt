@@ -81,12 +81,26 @@ class GpsTrackingManager private constructor(private val context: Context) {
         private const val ACCELERATION_SMOOTHING_FACTOR = 0.60f
         private const val DECELERATION_SMOOTHING_FACTOR = 0.80f
         private const val STOPPING_DECAY_FACTOR = 0.85f
-        private const val STATIONARY_SPEED_THRESHOLD_KMH = 0.5f
-        private const val MOVEMENT_SPEED_THRESHOLD_KMH = 1.0f
+        private const val BASE_STATIONARY_SPEED_THRESHOLD_KMH = 1.8f
         private const val IMMEDIATE_ZERO_THRESHOLD_KMH = 8.0f
         private const val LOCATION_UPDATE_INTERVAL_MILLIS = 500L
         private const val WATCHDOG_STALE_DECAY_TIMEOUT_MILLIS = 1500L
         private const val WATCHDOG_ZERO_TIMEOUT_MILLIS = 2500L
+
+        /**
+         * Adaptive noise gate for stationary detection.
+         * Indoors and in areas with poor GPS accuracy, multipath reflections bouncing off walls
+         * cause Doppler and coordinate drift of 1.5 - 4.5 km/h while stationary.
+         */
+        private fun getStationarySpeedThreshold(accuracyMeters: Float): Float {
+            return when {
+                accuracyMeters <= 5.0f -> 1.5f
+                accuracyMeters <= 10.0f -> 2.0f
+                accuracyMeters <= 20.0f -> 3.2f
+                accuracyMeters <= 35.0f -> 4.5f
+                else -> 6.0f
+            }
+        }
 
         @Volatile
         private var instance: GpsTrackingManager? = null
@@ -308,7 +322,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
                                 0.0f
                             } else {
                                 val decayed = current.currentSpeedKmh * (1.0f - STOPPING_DECAY_FACTOR)
-                                if (decayed <= MOVEMENT_SPEED_THRESHOLD_KMH) 0.0f else decayed
+                                if (decayed <= BASE_STATIONARY_SPEED_THRESHOLD_KMH) 0.0f else decayed
                             }
                         }
                         lastLocationProcessedElapsedMillis > 0L && timeSinceLastFix >= WATCHDOG_ZERO_TIMEOUT_MILLIS -> 0.0f
@@ -317,7 +331,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
                                 0.0f
                             } else {
                                 val decayed = current.currentSpeedKmh * (1.0f - STOPPING_DECAY_FACTOR)
-                                if (decayed <= MOVEMENT_SPEED_THRESHOLD_KMH) 0.0f else decayed
+                                if (decayed <= BASE_STATIONARY_SPEED_THRESHOLD_KMH) 0.0f else decayed
                             }
                         }
                         else -> current.currentSpeedKmh
@@ -346,25 +360,31 @@ class GpsTrackingManager private constructor(private val context: Context) {
             else -> GpsSignalQuality.SEARCHING
         }
         val isSearchingGps = signalQuality == GpsSignalQuality.SEARCHING || accuracy > 30f
+        val stationaryThreshold = getStationarySpeedThreshold(accuracy)
 
-        val reportedSpeedKmh = if (location.hasSpeed()) {
+        val rawReportedSpeedKmh = if (location.hasSpeed()) {
             (location.speed * 3.6f).coerceIn(0.0f, MAX_REASONABLE_SPEED_KMH)
+        } else {
+            0.0f
+        }
+        val speedAccuracyKmh = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy()) {
+            location.speedAccuracyMetersPerSecond * 3.6f
         } else {
             0.0f
         }
         val hasReliableReportedSpeed = !isSearchingGps && location.hasSpeed() && run {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !location.hasSpeedAccuracy()) {
-                true
+                rawReportedSpeedKmh > stationaryThreshold
             } else {
-                val speedAccuracyKmh = location.speedAccuracyMetersPerSecond * 3.6f
-                speedAccuracyKmh < 15.0f
+                speedAccuracyKmh < 12.0f && rawReportedSpeedKmh > max(stationaryThreshold, speedAccuracyKmh * 1.25f)
             }
         }
+        val filteredReportedSpeedKmh = if (hasReliableReportedSpeed) rawReportedSpeedKmh else 0.0f
 
         val point = LocationPoint(
             latitude = location.latitude,
             longitude = location.longitude,
-            speedKmh = if (isSearchingGps) 0.0f else reportedSpeedKmh,
+            speedKmh = if (isSearchingGps) 0.0f else filteredReportedSpeedKmh,
             altitude = if (location.hasAltitude()) location.altitude else 0.0,
             timestamp = location.time,
             accuracy = accuracy
@@ -372,9 +392,10 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
         _trackingState.update { current ->
             if (current.status != TrackingStatus.TRACKING) {
-                // Just update current position and signal
+                // Just update current position and signal; ensure speed is strictly 0.0 when not recording
                 return@update current.copy(
                     currentLocation = point,
+                    currentSpeedKmh = 0.0f,
                     gpsAccuracyMeters = accuracy,
                     signalQuality = signalQuality,
                     altitudeMeters = point.altitude,
@@ -389,6 +410,9 @@ class GpsTrackingManager private constructor(private val context: Context) {
             var hasAcceptedMovementSegment = false
             var distanceFromAnchor = 0.0
             var maximumPlausibleDistanceFromAnchor = 0.0
+
+            // Minimum displacement between raw fixes to distinguish true movement from indoor GPS jitter
+            val minConsecutiveMoveDistance = max(4.0, accuracy * 0.45)
 
             if (!isSearchingGps && lastLoc != null && lastLoc.accuracy <= 30f) {
                 val dist = location.distanceTo(lastLoc).toDouble()
@@ -405,10 +429,13 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
                 if (
                     elapsedMillis > 0 &&
-                    dist >= 0.5 &&
+                    dist >= minConsecutiveMoveDistance &&
                     dist <= maximumPlausibleDistance
                 ) {
-                    calculatedSpeedKmh = (dist / elapsedMillis * 3600.0).toFloat()
+                    val calc = (dist / elapsedMillis * 3600.0).toFloat()
+                    if (calc > stationaryThreshold) {
+                        calculatedSpeedKmh = calc
+                    }
                 }
             }
 
@@ -427,11 +454,11 @@ class GpsTrackingManager private constructor(private val context: Context) {
                     distanceFromAnchor = location.distanceTo(distanceAnchor).toDouble()
                     maximumPlausibleDistanceFromAnchor = elapsedFromAnchorMillis * 55.56 / 1000.0
                     val accuracyBasedDistance =
-                        max(location.accuracy, distanceAnchor.accuracy).toDouble() * 0.5
-                    val minimumReliableDistance = max(3.0, accuracyBasedDistance)
+                        max(location.accuracy, distanceAnchor.accuracy).toDouble() * 0.6
+                    val minimumReliableDistance = max(5.0, accuracyBasedDistance)
                     val hasMovementEvidence =
-                        (hasReliableReportedSpeed && reportedSpeedKmh > STATIONARY_SPEED_THRESHOLD_KMH) ||
-                        calculatedSpeedKmh > MOVEMENT_SPEED_THRESHOLD_KMH
+                        filteredReportedSpeedKmh > stationaryThreshold ||
+                        calculatedSpeedKmh > stationaryThreshold
 
                     if (
                         hasMovementEvidence &&
@@ -452,29 +479,25 @@ class GpsTrackingManager private constructor(private val context: Context) {
 
             lastRawLocation = location
 
-            val measuredSpeedKmh = if (isSearchingGps) {
-                0.0f
-            } else if (hasReliableReportedSpeed) {
-                if (reportedSpeedKmh <= STATIONARY_SPEED_THRESHOLD_KMH) 0.0f else reportedSpeedKmh
-            } else if (calculatedSpeedKmh > 0.0f) {
-                calculatedSpeedKmh
-            } else {
-                0.0f
+            val measuredSpeedKmh = when {
+                isSearchingGps -> 0.0f
+                filteredReportedSpeedKmh > stationaryThreshold -> filteredReportedSpeedKmh
+                calculatedSpeedKmh > stationaryThreshold -> calculatedSpeedKmh
+                else -> 0.0f
             }
 
             val effectiveSpeed = when {
                 isSearchingGps && current.currentSpeedKmh <= IMMEDIATE_ZERO_THRESHOLD_KMH -> 0.0f
-                measuredSpeedKmh <= STATIONARY_SPEED_THRESHOLD_KMH -> {
-                    // Vehicle is stopped or coming to a stop
+                measuredSpeedKmh <= 0.001f -> {
+                    // Vehicle / device is stationary
                     if (current.currentSpeedKmh <= IMMEDIATE_ZERO_THRESHOLD_KMH) {
                         0.0f
                     } else {
                         val decayed = current.currentSpeedKmh * (1.0f - STOPPING_DECAY_FACTOR)
-                        if (decayed <= MOVEMENT_SPEED_THRESHOLD_KMH) 0.0f else decayed
+                        if (decayed <= stationaryThreshold) 0.0f else decayed
                     }
                 }
-                current.currentSpeedKmh <= 0.001f &&
-                    measuredSpeedKmh < MOVEMENT_SPEED_THRESHOLD_KMH -> 0.0f
+                current.currentSpeedKmh <= 0.001f && measuredSpeedKmh <= stationaryThreshold -> 0.0f
                 current.currentSpeedKmh <= 0.001f -> measuredSpeedKmh
                 measuredSpeedKmh < current.currentSpeedKmh -> {
                     // Decelerating / braking: highly responsive
@@ -485,13 +508,13 @@ class GpsTrackingManager private constructor(private val context: Context) {
                     }
                     val smoothed = current.currentSpeedKmh * (1.0f - factor) +
                         measuredSpeedKmh * factor
-                    if (smoothed <= MOVEMENT_SPEED_THRESHOLD_KMH) 0.0f else smoothed
+                    if (smoothed <= stationaryThreshold) 0.0f else smoothed
                 }
                 else -> {
                     // Accelerating or cruising: smooth display without micro-jitter
                     val smoothed = current.currentSpeedKmh * (1.0f - ACCELERATION_SMOOTHING_FACTOR) +
                         measuredSpeedKmh * ACCELERATION_SMOOTHING_FACTOR
-                    if (smoothed <= MOVEMENT_SPEED_THRESHOLD_KMH) 0.0f else smoothed
+                    if (smoothed <= stationaryThreshold) 0.0f else smoothed
                 }
             }
             val newDistance = if (hasAcceptedMovementSegment) {
@@ -514,7 +537,7 @@ class GpsTrackingManager private constructor(private val context: Context) {
             }
 
             val peakSpeed = max(effectiveSpeed, measuredSpeedKmh)
-            val newMaxSpeed = if (isSearchingGps) {
+            val newMaxSpeed = if (isSearchingGps || peakSpeed <= stationaryThreshold) {
                 current.maxSpeedKmh
             } else {
                 max(current.maxSpeedKmh, peakSpeed)
