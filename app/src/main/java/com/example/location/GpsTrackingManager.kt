@@ -54,6 +54,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
     private var lastRawLocation: Location? = null
     private var lastDistanceLocation: Location? = null
     private var lastLocationProcessedElapsedMillis = 0L
+    private var lastProcessedLocationElapsedNanos = 0L
+    private var lastProcessedLocationTimeMillis = 0L
     private var isListeningGps = false
     private var isSystemFallbackActive = false
     private var consecutiveMovingFixes = 0
@@ -214,6 +216,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
         lastRawLocation = null
         lastDistanceLocation = null
         lastLocationProcessedElapsedMillis = 0L
+        lastProcessedLocationElapsedNanos = 0L
+        lastProcessedLocationTimeMillis = 0L
         consecutiveMovingFixes = 0
 
         val currentLoc = _trackingState.value.currentLocation
@@ -251,6 +255,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
         stopGpsUpdates()
         lastRawLocation = null
         lastDistanceLocation = null
+        lastProcessedLocationElapsedNanos = 0L
+        lastProcessedLocationTimeMillis = 0L
         consecutiveMovingFixes = 0
     }
 
@@ -277,6 +283,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
         stopGpsUpdates()
         lastRawLocation = null
         lastDistanceLocation = null
+        lastProcessedLocationElapsedNanos = 0L
+        lastProcessedLocationTimeMillis = 0L
         consecutiveMovingFixes = 0
     }
 
@@ -285,6 +293,8 @@ class GpsTrackingManager private constructor(private val context: Context) {
         timerJob = null
         lastRawLocation = null
         lastDistanceLocation = null
+        lastProcessedLocationElapsedNanos = 0L
+        lastProcessedLocationTimeMillis = 0L
         consecutiveMovingFixes = 0
 
         val currentLoc = _trackingState.value.currentLocation
@@ -354,9 +364,28 @@ class GpsTrackingManager private constructor(private val context: Context) {
     }
 
     private fun processNewLocation(location: Location) {
-        val nowElapsedMillis = SystemClock.elapsedRealtime()
-        if (nowElapsedMillis - lastLocationProcessedElapsedMillis < LOCATION_UPDATE_INTERVAL_MILLIS) return
-        lastLocationProcessedElapsedMillis = nowElapsedMillis
+        val hasElapsedRealtime = Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 &&
+            location.elapsedRealtimeNanos > 0L
+
+        val shouldSkip = if (hasElapsedRealtime && lastProcessedLocationElapsedNanos > 0L) {
+            val deltaMillis = (location.elapsedRealtimeNanos - lastProcessedLocationElapsedNanos) / 1_000_000L
+            deltaMillis < LOCATION_UPDATE_INTERVAL_MILLIS
+        } else if (location.time > 0L && lastProcessedLocationTimeMillis > 0L) {
+            val deltaMillis = location.time - lastProcessedLocationTimeMillis
+            deltaMillis < LOCATION_UPDATE_INTERVAL_MILLIS
+        } else {
+            false
+        }
+
+        if (shouldSkip) return
+
+        if (hasElapsedRealtime) {
+            lastProcessedLocationElapsedNanos = location.elapsedRealtimeNanos
+        }
+        if (location.time > 0L) {
+            lastProcessedLocationTimeMillis = location.time
+        }
+        lastLocationProcessedElapsedMillis = SystemClock.elapsedRealtime()
 
         val accuracy = location.accuracy
         val isNetworkProvider = location.provider == LocationManager.NETWORK_PROVIDER
